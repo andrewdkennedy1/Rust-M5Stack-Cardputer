@@ -3,6 +3,7 @@ pub mod fs;
 pub mod hal;
 pub mod keyboard;
 pub mod loader;
+pub mod os;
 pub mod swapchain;
 pub mod terminal;
 pub mod typing;

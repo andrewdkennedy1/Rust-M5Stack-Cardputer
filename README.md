@@ -1,69 +1,51 @@
-# Rust on M5Stack Cardputer
-<a href="https://github.com/Kezii/Rust-M5Stack-Cardputer/actions"><img alt="actions" src="https://github.com/Kezii/Rust-M5Stack-Cardputer/actions/workflows/rust.yml/badge.svg"></a>
+# Cardputer RustOS
 
-### Implemented drivers
-- [x] display
-- [x] keyboard
-- [x] speaker (needs testing, #2)
-- [ ] sd card
-- [ ] battery
-- [ ] microphone
-- [ ] rgb led
+Cardputer RustOS turns this repo into a self-hosted launcher for the M5Stack Cardputer. The loader stays resident on the factory partition while user apps live in OTA slots and on the SD card, giving you a menu-driven experience instead of flashing one-off binaries.
 
-### Utilities
-- [x] double buffering
-- [x] keyboard input events (typing, shift/fn etc)
-- [ ] sd card filesystem ?
-- [ ] app loader ?
+## Why RustOS?
+- **Chain-load everything:** Keep the main slot for the OS and flash OTA partitions on-demand from binaries stored on `/sdcard/apps`.
+- **Menu-first UX:** Boot straight into the launcher and return there on reset for a handheld-OS feel.
+- **SD-friendly:** Drop `.bin` artifacts on the SD card and run them without reflashing your base image.
+- **Modular Rust:** Display, keyboard, swapchain, and SD abstractions stay in dedicated modules for reuse across apps.
 
-# Getting started
+## Project layout
+- `src/os/` – Cardputer RustOS runtime (menu, status UI, chainloader, and app metadata).
+- `src/loader.rs` – Thin shim that exposes `cardputer::os::boot()` for backwards-compatible entrypoints.
+- `src/bin/loader.rs` – Binary target that boots the OS loader.
+- `src/hal.rs`, `src/display_driver.rs`, `src/keyboard.rs`, `src/swapchain.rs` – Hardware abstractions and framebuffer plumbing.
+- `src/bin/` – Sample apps (graphics demo, rink terminal, sound, ESP-NOW remote, etc.).
 
-First, install cargo or rustup using your (Linux) package manager, or from the official website
+## Building
+1. Install the ESP-IDF Rust toolchain as described in the [esp-rs book](https://esp-rs.github.io/book/installation/riscv-and-xtensa.html).
+2. Connect the Cardputer over USB.
+3. Build and flash the loader:
+   ```bash
+   cargo run --release --bin loader
+   ```
 
-https://doc.rust-lang.org/cargo/getting-started/installation.html
+> If `cargo fmt` or `cargo run` complain about a missing `esp` toolchain, install it with `rustup toolchain install esp --component rust-src`.
 
-Then, install the toolchain for esp32, following their official book
-
-https://esp-rs.github.io/book/installation/riscv-and-xtensa.html
-
-# Examples
-
-## 3d graphics demo
-https://github.com/Kezii/Rust-M5Stack-Cardputer/assets/3357750/658bd303-03c5-4dc2-9c49-75a98b667719
-
-
-Interactive 3d graphics demo based on [embedded-gfx](https://github.com/Kezii/embedded-gfx)
-
-Use (orange) arrow keys to move, EASD to look around
-
+## SD card layout
+Place your app binaries on the SD card under `/sdcard/apps` (you can use nested folders). Example:
 ```
-cargo run --release --bin graphics
+/sdcard
+  /apps
+    /demos
+      cube.bin
+    weather.bin
 ```
+The launcher ignores hidden files and only shows `.bin` entries.
 
-## Terminal emulator with rink-core
+## Runtime flow
+1. Boot -> RustOS mounts the SD card and scans `/sdcard/apps`.
+2. You pick an app in the menu using `;`/`.` or `W`/`S`. `Enter` flashes the selected binary into the next OTA slot.
+3. The device reboots directly into the flashed app. Hitting reset brings you back to the RustOS menu to choose again.
 
-![terminal](https://github.com/Kezii/Rust-M5Stack-Cardputer/assets/3357750/90585aa0-dfcb-4bc8-bd9d-3e5204a807f0)
+## Developing apps
+- Add a new binary in `src/bin/<name>.rs` to bundle it with the OS firmware.
+- Or build standalone firmware and copy the resulting `.bin` to the SD card so the loader can flash it into an OTA slot.
+- Reuse the hardware helpers in `cardputer::hal`, `cardputer::display_driver`, `cardputer::keyboard`, and `cardputer::swapchain` to keep your apps lean.
 
-Terminal emulator with rink-core built-in, with a reduced set of (gnu) units so it fits on the ram
-
-You can use it as a simple units-aware calculator
-
-```
-cargo run --release --bin rink
-```
-
-## ESP-NOW remote keyboard
-
-Sends key events over ESP-NOW, using the Cardputer as a remote keyboard
-
-An ESP-NOW receiver with a wifi access point is required
-
-```
-cargo run --release --bin espnow_remote
-```
-
-
-# Credits
-Upstream display driver
-
-https://github.com/almindor/st7789
+## Credits
+- Based on the community efforts around the M5Stack Cardputer and `esp-idf-hal`.
+- Display driver powered by [`st7789`](https://github.com/almindor/st7789).
