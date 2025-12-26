@@ -36,10 +36,25 @@ Place your app binaries on the SD card under `/sdcard/apps` (you can use nested 
 ```
 The launcher ignores hidden files and only shows `.bin` entries.
 
-## Runtime flow
-1. Boot -> RustOS mounts the SD card and scans `/sdcard/apps`.
-2. You pick an app in the menu using `;`/`.` or `W`/`S`. `Enter` flashes the selected binary into the next OTA slot.
-3. The device reboots directly into the flashed app. Hitting reset brings you back to the RustOS menu to choose again.
+## How it Works
+RustOS uses the ESP32-S3's partition system to provide a reliable handheld experience:
+- **Factory Partition**: Occupied by the **OS Loader**. This is your "Home" partition.
+- **OTA Partitions**: Two 2MB slots (`ota_0`, `ota_1`) used for running apps.
+- **Boot Flow**: The OS scans your SD card, let's you pick a `.bin`, and flashes it into the next OTA slot. It then sets that slot as the default boot target and reboots.
+
+## Recovery (Safe Mode)
+If an application crashes, freezes, or refuses to return to the OS:
+1.  **Hard Reset**: Press the side **RESET** button.
+2.  **Safe Mode**: Hold the **Space Key** for ~2 seconds during the reset.
+3.  **Result**: The bootloader will detect the Space key (GPIO 7), erase the `otadata` partition (which clears the OTA boot target), and immediately return you to the **Factory OS Loader**.
+
+> [!NOTE]
+> Holding **G0** during reset enters the hardware "Download Mode" for flashing via USB. This is different from the OS "Safe Mode" triggered by the Space key.
+
+## Known Limitations
+- **App Size**: Apps must be under **3MB** to fit in the OTA slots.
+- **Single App State**: Flashing a new app from the OS replaces the previous entry in the OTA cycle.
+- **NVS Persistence**: The Space-key recovery erases NVS settings (like WiFi) along with the OTA data to ensure a "Clean" return to the OS.
 
 ## Developing apps
 - Add a new binary in `src/bin/<name>.rs` to bundle it with the OS firmware.
