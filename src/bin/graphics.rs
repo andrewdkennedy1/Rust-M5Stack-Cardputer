@@ -1,7 +1,14 @@
 use std::f32::consts::PI;
 use std::ffi::c_void;
+use std::io::Read;
+use std::fs::File;
 
-use cardputer::{hal::cardputer_peripherals, keyboard, swapchain::DoubleBuffer};
+use cardputer::{
+    fs::{self, SdCard},
+    hal::cardputer_peripherals,
+    keyboard,
+    swapchain::DoubleBuffer,
+};
 use embedded_gfx::mesh::K3dMesh;
 use embedded_gfx::{
     draw::draw,
@@ -21,6 +28,9 @@ use load_stl::embed_stl;
 use log::info;
 use nalgebra::Point3;
 
+#[no_mangle]
+extern "Rust" fn __pender(_context: *mut ()) {}
+
 fn make_xz_plane() -> Vec<[f32; 3]> {
     let step = 1.0;
     let nsteps = 10;
@@ -37,6 +47,80 @@ fn make_xz_plane() -> Vec<[f32; 3]> {
     }
 
     vertices
+}
+
+// Container to hold the data for Geometry so it lives long enough
+struct StlData {
+    vertices: Vec<[f32; 3]>,
+    faces: Vec<[usize; 3]>,
+}
+
+impl StlData {
+    fn as_geometry(&self) -> Geometry {
+        Geometry {
+            vertices: &self.vertices,
+            faces: &self.faces,
+            colors: &[],
+            lines: &[],
+            normals: &[],
+        }
+    }
+}
+
+// Simple parsing: Triangle soup (no deduplication for speed/simplicity)
+fn parse_stl(bytes: &[u8]) -> Option<StlData> {
+    if bytes.len() < 84 { return None; }
+    
+    let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+    if bytes.len() < 84 + count * 50 { return None; }
+
+    let mut vertices = Vec::with_capacity(count * 3);
+    let mut faces = Vec::with_capacity(count);
+
+    let mut offset = 84;
+    for i in 0..count {
+        // Skip normal (12 bytes)
+        offset += 12;
+
+        for _ in 0..3 {
+           let x = f32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
+           let y = f32::from_le_bytes(bytes[offset+4..offset+8].try_into().unwrap());
+           let z = f32::from_le_bytes(bytes[offset+8..offset+12].try_into().unwrap());
+           vertices.push([x, y, z]);
+           offset += 12;
+        }
+
+        faces.push([
+            (i * 3) as usize, 
+            (i * 3 + 1) as usize, 
+            (i * 3 + 2) as usize
+        ]);
+
+        // attribute byte count (2 bytes)
+        offset += 2;
+    }
+
+    Some(StlData { vertices, faces })
+}
+
+
+fn load_stl_from_path(path: &str, default_geometry: Geometry<'static>) -> StlData {
+    if let Ok(mut file) = File::open(path) {
+        let mut buffer = Vec::new();
+        if file.read_to_end(&mut buffer).is_ok() {
+            if let Some(data) = parse_stl(&buffer) {
+                 info!("Loaded STL from {}", path);
+                 return data;
+            }
+        }
+    }
+    info!("Using embedded STL for {}", path);
+    
+    // We need to copy default geometry into Owned StlData
+    StlData {
+        vertices: default_geometry.vertices.to_vec(),
+        faces: default_geometry.faces.to_vec(),
+    }
 }
 
 #[allow(clippy::approx_constant)]
@@ -66,6 +150,16 @@ fn main() {
 
     let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
 
+    // Try mount SD
+    let _sd = SdCard::new(
+        "/sdcard",
+        esp_idf_svc::sys::spi_host_device_t_SPI3_HOST,
+        39,
+        14, // MOSI
+        40, // SCK
+        12, // CS
+    ).ok();
+
     info!("creating 3d scene");
     //
     // ----------------- CUT HERE -----------------
@@ -80,16 +174,19 @@ fn main() {
     });
     ground.set_color(Rgb565::new(0, 255, 0));
 
-    let mut suzanne = K3dMesh::new(embed_stl!("src/bin/3d objects/Suzanne.stl"));
+    let suzanne_data = load_stl_from_path("/sdcard/3d/Suzanne.stl", embed_stl!("src/bin/3d objects/Suzanne.stl"));
+    let mut suzanne = K3dMesh::new(suzanne_data.as_geometry());
     suzanne.set_render_mode(RenderMode::Lines);
     suzanne.set_scale(2.0);
     suzanne.set_color(Rgb565::CSS_RED);
 
-    let mut teapot = K3dMesh::new(embed_stl!("src/bin/3d objects/Teapot_low.stl"));
+    let teapot_data = load_stl_from_path("/sdcard/3d/Teapot.stl", embed_stl!("src/bin/3d objects/Teapot_low.stl"));
+    let mut teapot = K3dMesh::new(teapot_data.as_geometry());
     teapot.set_position(-10.0, 0.0, 0.0);
     teapot.set_color(Rgb565::CSS_BLUE_VIOLET);
 
-    let mut blahaj = K3dMesh::new(embed_stl!("src/bin/3d objects/blahaj.stl"));
+    let blahaj_data = load_stl_from_path("/sdcard/3d/blahaj.stl", embed_stl!("src/bin/3d objects/blahaj.stl"));
+    let mut blahaj = K3dMesh::new(blahaj_data.as_geometry());
     blahaj.set_color(Rgb565::new(105 >> 3, 150 >> 2, 173 >> 3));
     blahaj.set_render_mode(RenderMode::SolidLightDir(nalgebra::Vector3::new(
         -1.0, 0.0, 0.0,

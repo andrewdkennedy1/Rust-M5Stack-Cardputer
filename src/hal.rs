@@ -21,8 +21,8 @@ pub fn prepare_display<SPI: SpiAnyPins>(
     rst: impl Peripheral<P = impl OutputPin> + 'static,
     dc: impl Peripheral<P = impl OutputPin> + 'static,
     bl: impl Peripheral<P = impl OutputPin> + 'static,
-    ledc_timer: impl Peripheral<P = impl LedcTimer> + 'static,
-    ledc_channel: impl Peripheral<P = impl LedcChannel> + 'static,
+    _ledc_timer: impl Peripheral<P = impl LedcTimer> + 'static,
+    _ledc_channel: impl Peripheral<P = impl LedcChannel> + 'static,
 ) -> display_driver::ST7789<
     SPIInterface<
         SpiDeviceDriver<'static, SpiDriver<'static>>,

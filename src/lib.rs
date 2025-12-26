@@ -1,6 +1,8 @@
 pub mod display_driver;
+pub mod fs;
 pub mod hal;
 pub mod keyboard;
+pub mod loader;
 pub mod swapchain;
 pub mod terminal;
 pub mod typing;
