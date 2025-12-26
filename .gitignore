@@ -2,3 +2,8 @@
 /.embuild
 /target
 /Cargo.lock
+temp_espflash/espflash.exe
+temp_espflash/espflash.zip
+temp_espup/espup.exe
+temp_espup/espup.zip
+build_log.txt

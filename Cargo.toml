@@ -23,12 +23,13 @@ std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
 alloc = ["esp-idf-svc/alloc"]
 nightly = ["esp-idf-svc/nightly"]
 experimental = ["esp-idf-svc/experimental"]
-embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/critical-section", "esp-idf-svc/embassy-time-driver"]
+embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/embassy-time-driver"]
 
 [dependencies]
+embassy-executor = { version = "0.7", features = ["arch-std", "executor-thread"] }
 log = { version = "0.4", default-features = false }
-esp-idf-svc = { version = "0.48", default-features = false }
-esp-idf-hal = {version="0.43.0"}
+esp-idf-svc = { version = "0.51", default-features = false }
+esp-idf-hal = { version = "0.45" }
 #st7789 = "0.7.0"
 embedded-graphics = "0.8.1"
 embedded-graphics-core = "0.4.0"
@@ -43,4 +44,4 @@ display-interface = "0.5.0"
 rink-core = "0.7"
 
 [build-dependencies]
-embuild = "0.31.3"
+embuild = "0.33"
