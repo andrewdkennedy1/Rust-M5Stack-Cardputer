@@ -32,7 +32,7 @@ pub fn boot() -> ! {
     sys::link_patches();
     unsafe {
         let partition = sys::esp_ota_get_running_partition();
-        if !partition.is_null() && (*partition).type_ == sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP && (*partition).subtype == sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_FACTORY {
+        if !partition.is_null() && (*partition).type_ == sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP {
             sys::esp_ota_mark_app_valid_cancel_rollback();
         }
     }
