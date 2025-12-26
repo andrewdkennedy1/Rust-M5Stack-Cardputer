@@ -13,7 +13,8 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 const FLASH_CHUNK_SIZE: usize = 4096;
 
 pub fn ota_partition_available() -> bool {
-    unsafe { sys::esp_ota_get_next_update_partition(core::ptr::null()) } != core::ptr::null()
+    let update = unsafe { sys::esp_ota_get_next_update_partition(core::ptr::null()) };
+    !update.is_null()
 }
 
 pub fn flash_and_reboot(
@@ -113,8 +114,7 @@ pub fn flash_and_reboot(
 
     render_status(buffers, "Rebooting", &["Switching app..."], None);
     std::thread::sleep(Duration::from_millis(500));
-    unsafe { sys::esp_restart() };
-    Ok(())
+    unsafe { sys::esp_restart() }
 }
 
 #[derive(Debug)]

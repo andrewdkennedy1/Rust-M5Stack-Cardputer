@@ -1,15 +1,16 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write as StdWrite;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use esp_idf_hal::modem::Modem;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::http::server::{Configuration as HttpConfig, EspHttpServer};
 use esp_idf_svc::http::Method;
-use esp_idf_svc::netif::EspNetifStack;
-use esp_idf_svc::nvs::EspDefaultNvs;
+use esp_idf_svc::io::Write as HttpWrite;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{AccessPointConfiguration, AuthMethod, BlockingWifi, Configuration, EspWifi};
 use log::{error, info};
 
@@ -28,7 +29,7 @@ pub struct WifiState {
 
 pub type WifiStateHandle = Arc<Mutex<WifiState>>;
 
-pub fn start_ap_file_server(sd_root: Option<PathBuf>) -> WifiStateHandle {
+pub fn start_ap_file_server(modem: Modem, sd_root: Option<PathBuf>) -> WifiStateHandle {
     let state = Arc::new(Mutex::new(WifiState {
         mode: WifiMode::AccessPoint,
         ssid: "Cardputer-RustOS".to_string(),
@@ -37,7 +38,7 @@ pub fn start_ap_file_server(sd_root: Option<PathBuf>) -> WifiStateHandle {
 
     let state_thread = state.clone();
     thread::spawn(move || {
-        if let Err(err) = bringup_ap_and_server(sd_root, state_thread) {
+        if let Err(err) = bringup_ap_and_server(modem, sd_root, state_thread) {
             error!("WiFi file server failed: {:?}", err);
         }
     });
@@ -47,18 +48,21 @@ pub fn start_ap_file_server(sd_root: Option<PathBuf>) -> WifiStateHandle {
 
 type ServerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-fn bringup_ap_and_server(sd_root: Option<PathBuf>, state: WifiStateHandle) -> ServerResult<()> {
+fn bringup_ap_and_server(
+    modem: Modem,
+    sd_root: Option<PathBuf>,
+    state: WifiStateHandle,
+) -> ServerResult<()> {
     let sysloop = EspSystemEventLoop::take()?;
-    let netif = EspNetifStack::new()?;
-    let nvs = EspDefaultNvs::new()?;
+    let nvs = EspDefaultNvsPartition::take()?;
 
-    let mut wifi = BlockingWifi::wrap(EspWifi::new(netif, sysloop.clone(), Some(nvs))?, sysloop)?;
+    let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, sysloop.clone(), Some(nvs))?, sysloop)?;
 
     let ssid = "Cardputer-RustOS";
     let password = "cardputer";
     let ap_cfg = AccessPointConfiguration {
-        ssid: ssid.into(),
-        password: password.into(),
+        ssid: ssid.try_into().unwrap(),
+        password: password.try_into().unwrap(),
         channel: 6,
         auth_method: AuthMethod::WPA2Personal,
         max_connections: 4,
@@ -69,7 +73,7 @@ fn bringup_ap_and_server(sd_root: Option<PathBuf>, state: WifiStateHandle) -> Se
     wifi.start()?;
     wifi.wait_netif_up()?;
 
-    if let Ok(ip_info) = wifi.ap_netif().get_ip_info() {
+    if let Ok(ip_info) = wifi.wifi().ap_netif().get_ip_info() {
         let mut guard = state.lock().unwrap();
         guard.ip = Some(ip_info.ip.to_string());
     }
@@ -106,8 +110,7 @@ fn launch_http(sd_root: Option<PathBuf>, state: WifiStateHandle) -> ServerResult
 
         let filename = req
             .header("X-Filename")
-            .and_then(|mut h| h.next())
-            .map(|s| s.to_owned())
+            .map(str::to_owned)
             .unwrap_or_else(|| "upload.bin".to_string());
 
         let target = upload_root
@@ -165,7 +168,7 @@ fn render_index(state: &WifiStateHandle) -> String {
 <pre id="status"></pre>
 <script>
   const form = document.getElementById('uploadForm');
-  form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', async (e) => {{
     e.preventDefault();
     const fileInput = document.getElementById('file');
     if (!fileInput.files.length) {{
@@ -181,7 +184,7 @@ fn render_index(state: &WifiStateHandle) -> String {
     }});
     const text = await resp.text();
     document.getElementById('status').innerText = 'Upload result: ' + text;
-  });
+  }});
 </script>
 </body>
 </html>

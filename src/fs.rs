@@ -2,7 +2,7 @@ use esp_idf_svc::sys::{
     esp_vfs_fat_sdspi_mount, esp_vfs_fat_sdmmc_mount_config_t, sdmmc_card_t, sdmmc_host_t,
     sdspi_device_config_t, spi_bus_config_t, spi_host_device_t,
 };
-use std::ffi::{CString, CStr};
+use std::ffi::CString;
 use std::ptr;
 use log::info;
 
@@ -51,7 +51,7 @@ impl SdCard {
         // Let's dry run.
         // Update: I will check the unions for bus_config.
 
-        let mut slot_config = sdspi_device_config_t {
+        let slot_config = sdspi_device_config_t {
             host_id: spi_host,
             gpio_cs: cs,
             gpio_cd: -1,

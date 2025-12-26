@@ -14,7 +14,6 @@ use esp_idf_svc::sys;
 
 use crate::fs::SdCard;
 use crate::hal::cardputer_peripherals;
-use crate::keyboard::CardputerKeyboard;
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use app::{AppContext, AppLaunch};
@@ -34,12 +33,15 @@ pub fn boot() -> ! {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     let peripherals = peripherals::Peripherals::take().unwrap();
-    let cardputer = cardputer_peripherals(
-        peripherals.pins,
-        peripherals.spi2,
-        peripherals.ledc,
-        peripherals.i2s0,
-    );
+    let peripherals::Peripherals {
+        pins,
+        spi2,
+        ledc,
+        i2s0,
+        modem,
+        ..
+    } = peripherals;
+    let cardputer = cardputer_peripherals(pins, spi2, ledc, i2s0);
 
     let crate::hal::CardputerPeripherals {
         display,
@@ -75,7 +77,7 @@ pub fn boot() -> ! {
     let sd_ready = sd.is_some();
     let ota_ready = ota_partition_available();
 
-    let wifi_state = start_ap_file_server(if sd_ready {
+    let wifi_state = start_ap_file_server(modem, if sd_ready {
         Some(PathBuf::from(ROOT_PATH))
     } else {
         None
@@ -101,7 +103,7 @@ pub fn boot() -> ! {
         }
     }
 
-    let mut context = AppContext::new(sd_ready, ota_ready);
+    let context = AppContext::new(sd_ready, ota_ready);
 
     loop {
         let status = status_provider.snapshot();

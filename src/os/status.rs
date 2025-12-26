@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::systime::EspSystemTime;
 
@@ -35,9 +35,11 @@ impl StatusProvider {
     }
 
     fn clock_text(&self) -> String {
-        match EspSystemTime {}.now().duration_since(UNIX_EPOCH) {
-            Ok(duration) => format_hms(duration),
-            Err(_) => format_hms(Duration::from_secs(self.started_at.elapsed().as_secs())),
+        let duration = EspSystemTime.now();
+        if duration.as_secs() == 0 {
+            format_hms(self.started_at.elapsed())
+        } else {
+            format_hms(duration)
         }
     }
 

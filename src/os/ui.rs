@@ -9,7 +9,7 @@ use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use super::app::AppContext;
-use super::menu::{display_name, menu_path_display, MenuItem, MenuState};
+use super::menu::{display_name, menu_path_display, MenuState};
 use super::status::StatusSnapshot;
 
 const LIST_TOP: i32 = 48;
