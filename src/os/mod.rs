@@ -21,7 +21,7 @@ use chainload::ota_partition_available;
 use menu::{MenuAction, MenuItem, MenuState};
 use status::{BatteryGauge, StatusProvider};
 use ui::{render_menu, render_status, show_message_and_wait};
-use web::start_ap_file_server;
+use web::start_wifi_file_server;
 
 const ROOT_PATH: &str = "/sdcard";
 const DEFAULT_APPS_PATH: &str = "/sdcard/apps";
@@ -30,6 +30,12 @@ const UI_TICK_MS: u64 = 16;
 /// Boot entry point for Cardputer-RustOS.
 pub fn boot() -> ! {
     sys::link_patches();
+    unsafe {
+        let partition = sys::esp_ota_get_running_partition();
+        if !partition.is_null() && (*partition).type_ == sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP && (*partition).subtype == sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_FACTORY {
+            sys::esp_ota_mark_app_valid_cancel_rollback();
+        }
+    }
     esp_idf_svc::log::EspLogger::initialize_default();
 
     let peripherals = peripherals::Peripherals::take().unwrap();
@@ -77,7 +83,7 @@ pub fn boot() -> ! {
     let sd_ready = sd.is_some();
     let ota_ready = ota_partition_available();
 
-    let wifi_state = start_ap_file_server(modem, if sd_ready {
+    let wifi_state = start_wifi_file_server(modem, if sd_ready {
         Some(PathBuf::from(ROOT_PATH))
     } else {
         None
