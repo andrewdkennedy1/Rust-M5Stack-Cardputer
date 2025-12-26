@@ -1,4 +1,4 @@
-use std::ffi::c_void;
+use std::ffi::{c_void, CStr};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -12,6 +12,10 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const FLASH_CHUNK_SIZE: usize = 4096;
 
+fn esp_err_name(err: i32) -> String {
+    unsafe { CStr::from_ptr(sys::esp_err_to_name(err)).to_string_lossy().into_owned() }
+}
+
 pub fn ota_partition_available() -> bool {
     let update = unsafe { sys::esp_ota_get_next_update_partition(core::ptr::null()) };
     !update.is_null()
@@ -22,7 +26,10 @@ pub fn flash_and_reboot(
     path: &Path,
 ) -> Result<(), FlashError> {
     let mut file = File::open(path).map_err(FlashError::Open)?;
-    let total = file.metadata().ok().map(|m| m.len() as usize);
+    let total = file
+        .metadata()
+        .map(|m| m.len() as usize)
+        .map_err(FlashError::Metadata)?;
 
     let update = unsafe { sys::esp_ota_get_next_update_partition(core::ptr::null()) };
     if update.is_null() {
@@ -30,10 +37,18 @@ pub fn flash_and_reboot(
     }
 
     let part_size = unsafe { (*update).size as usize };
-    if let Some(total) = total {
-        if total > part_size {
-            return Err(FlashError::FileTooLarge { total, part_size });
-        }
+    if total > part_size {
+        return Err(FlashError::FileTooLarge { total, part_size });
+    }
+
+    let mut preview = [0u8; FLASH_CHUNK_SIZE];
+    let mut preview_len = file.read(&mut preview).map_err(FlashError::Read)?;
+    if preview_len == 0 {
+        return Err(FlashError::EmptyFile);
+    }
+
+    if preview[0] != 0xE9 {
+        return Err(FlashError::InvalidMagic(preview[0]));
     }
 
     render_status(
@@ -45,39 +60,36 @@ pub fn flash_and_reboot(
             .unwrap_or("app.bin")],
         Some(FlashProgress {
             written: 0,
-            total,
+            total: Some(total),
         }),
     );
 
     let mut handle: sys::esp_ota_handle_t = 0;
-    let err = unsafe { sys::esp_ota_begin(update, sys::OTA_SIZE_UNKNOWN as usize, &mut handle) };
+    let err = unsafe { sys::esp_ota_begin(update, total, &mut handle) };
     if err != 0 {
         return Err(FlashError::OtaBegin(err));
     }
 
-    let mut buf = [0u8; FLASH_CHUNK_SIZE];
+    let mut buf = preview;
     let mut written = 0usize;
     let mut last_render = Instant::now();
     let mut last_pct = None::<usize>;
 
     loop {
-        let n = match file.read(&mut buf) {
-            Ok(n) => n,
-            Err(err) => {
-                return Err(FlashError::Read(err));
+        if preview_len == 0 {
+            preview_len = file.read(&mut buf).map_err(FlashError::Read)?;
+            if preview_len == 0 {
+                break;
             }
-        };
-        if n == 0 {
-            break;
         }
 
-        let err = unsafe { sys::esp_ota_write(handle, buf.as_ptr() as *const c_void, n) };
+        let err = unsafe { sys::esp_ota_write(handle, buf.as_ptr() as *const c_void, preview_len) };
         if err != 0 {
             return Err(FlashError::OtaWrite(err));
         }
 
-        written += n;
-        let pct = total.map(|t| (written.saturating_mul(100) / t).min(100));
+        written += preview_len;
+        let pct = Some((written.saturating_mul(100) / total).min(100));
         let should_render = match (pct, last_pct) {
             (Some(pct), Some(last)) => pct != last,
             (Some(_), None) => true,
@@ -96,10 +108,12 @@ pub fn flash_and_reboot(
                     .unwrap_or("app.bin")],
                 Some(FlashProgress {
                     written,
-                    total,
+                    total: Some(total),
                 }),
             );
         }
+
+        preview_len = 0;
     }
 
     let err = unsafe { sys::esp_ota_end(handle) };
@@ -121,7 +135,10 @@ pub fn flash_and_reboot(
 pub enum FlashError {
     Open(std::io::Error),
     Read(std::io::Error),
+    Metadata(std::io::Error),
     NoOtaPartition,
+    EmptyFile,
+    InvalidMagic(u8),
     FileTooLarge { total: usize, part_size: usize },
     OtaBegin(i32),
     OtaWrite(i32),
@@ -134,18 +151,39 @@ impl FlashError {
         match self {
             FlashError::Open(err) => vec![format!("Open failed: {}", err)],
             FlashError::Read(err) => vec![format!("Read failed: {}", err)],
+            FlashError::Metadata(err) => vec![format!("Metadata failed: {}", err)],
             FlashError::NoOtaPartition => vec![
                 "No OTA partition available.".to_string(),
                 "Check partitions.csv.".to_string(),
             ],
+            FlashError::EmptyFile => vec!["App image is empty.".to_string()],
+            FlashError::InvalidMagic(magic) => vec![format!(
+                "Invalid app image header. Expected 0xE9, found 0x{magic:02X}."
+            )],
             FlashError::FileTooLarge { total, part_size } => vec![
                 format!("File too large: {} bytes", total),
                 format!("Partition size: {} bytes", part_size),
             ],
-            FlashError::OtaBegin(err) => vec![format!("OTA begin failed: {}", err)],
-            FlashError::OtaWrite(err) => vec![format!("OTA write failed: {}", err)],
-            FlashError::OtaEnd(err) => vec![format!("OTA end failed: {}", err)],
-            FlashError::OtaSetBoot(err) => vec![format!("Set boot failed: {}", err)],
+            FlashError::OtaBegin(err) => vec![format!(
+                "OTA begin failed: {} ({})",
+                err,
+                esp_err_name(*err)
+            )],
+            FlashError::OtaWrite(err) => vec![format!(
+                "OTA write failed after erase: {} ({})",
+                err,
+                esp_err_name(*err)
+            )],
+            FlashError::OtaEnd(err) => vec![format!(
+                "OTA end failed: {} ({})",
+                err,
+                esp_err_name(*err)
+            )],
+            FlashError::OtaSetBoot(err) => vec![format!(
+                "Set boot partition failed: {} ({})",
+                err,
+                esp_err_name(*err)
+            )],
         }
     }
 }
