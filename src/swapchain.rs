@@ -67,6 +67,7 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
         ThreadSpawnConfiguration {
             name: Some(b"fb writer\0"),
             pin_to_core: Some(esp_idf_svc::hal::cpu::Core::Core1),
+            stack_size: Some(10240),
             ..Default::default()
         }
         .set()
