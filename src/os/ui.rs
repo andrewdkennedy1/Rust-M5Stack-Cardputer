@@ -46,40 +46,21 @@ pub fn render_menu(
         .draw(fbuf)
         .ok();
 
-    let len = menu.items.len();
-    let max_visible = MAX_VISIBLE_ROWS.min(len.max(1));
-    let half = max_visible / 2;
-    let mut start = if menu.selected > half {
-        menu.selected - half
-    } else {
-        0
-    };
-    if len > max_visible {
-        start = start.min(len - max_visible);
-    } else {
-        start = 0;
-    }
-
-    if len == 0 {
-        let empty_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-        Text::new("(empty)", Point::new(2, LIST_TOP), empty_style)
-            .draw(fbuf)
-            .ok();
-    } else {
-        for (idx, item) in menu.items.iter().enumerate().skip(start).take(max_visible) {
-            let y = LIST_TOP + (idx - start) as i32 * ROW_HEIGHT;
-            let selected = idx == menu.selected;
-            let color = if selected {
-                Rgb565::CSS_YELLOW
-            } else {
-                Rgb565::CSS_WHITE
-            };
-            let style = MonoTextStyle::new(&FONT_6X10, color);
-            let prefix = if selected { "> " } else { "  " };
-            let line = format!("{}{}", prefix, display_name(item));
-            Text::new(&line, Point::new(2, y), style).draw(fbuf).ok();
-        }
-    }
+    draw_selectable_list(
+        fbuf,
+        &menu.items,
+        menu.selected,
+        LIST_TOP,
+        ROW_HEIGHT,
+        MAX_VISIBLE_ROWS,
+        2,
+        Rgb565::CSS_WHITE,
+        Rgb565::CSS_YELLOW,
+        "> ",
+        "  ",
+        "(empty)",
+        |item| display_name(item),
+    );
 
     let footer_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
     let footer = if !context.sd_ready {
@@ -108,6 +89,57 @@ fn draw_right_aligned(
     let x = (SCREEN_WIDTH as i32 - width).max(0);
     Text::new(text, Point::new(x, y), style).draw(target).ok();
 }
+
+pub fn draw_selectable_list<T, F>(
+    target: &mut impl DrawTarget<Color = Rgb565>,
+    items: &[T],
+    selected: usize,
+    top: i32,
+    row_height: i32,
+    max_visible: usize,
+    left: i32,
+    normal_color: Rgb565,
+    selected_color: Rgb565,
+    prefix_selected: &str,
+    prefix_unselected: &str,
+    empty_text: &str,
+    to_line: F,
+)
+where
+    F: Fn(&T) -> String,
+{
+    let len = items.len();
+    let max_visible = max_visible.min(len.max(1));
+    let half = max_visible / 2;
+    let mut start = if selected > half {
+        selected - half
+    } else {
+        0
+    };
+    if len > max_visible {
+        start = start.min(len - max_visible);
+    } else {
+        start = 0;
+    }
+
+    if len == 0 {
+        let empty_style = MonoTextStyle::new(&FONT_6X10, normal_color);
+        Text::new(empty_text, Point::new(left, top), empty_style)
+            .draw(target)
+            .ok();
+    } else {
+        for (idx, item) in items.iter().enumerate().skip(start).take(max_visible) {
+            let y = top + (idx - start) as i32 * row_height;
+            let is_selected = idx == selected;
+            let color = if is_selected { selected_color } else { normal_color };
+            let style = MonoTextStyle::new(&FONT_6X10, color);
+            let prefix = if is_selected { prefix_selected } else { prefix_unselected };
+            let line = format!("{}{}", prefix, to_line(item));
+            Text::new(&line, Point::new(left, y), style).draw(target).ok();
+        }
+    }
+}
+
 
 pub fn render_status<T: AsRef<str>>(
     buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,

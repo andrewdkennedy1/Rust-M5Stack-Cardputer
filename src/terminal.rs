@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::ops::{Deref, DerefMut};
 
 use embedded_gfx::framebuffer::DmaReadyFramebuffer;
 use embedded_graphics::Drawable;
@@ -154,5 +155,39 @@ impl<'a, const W: usize, const H: usize> FbTerminal<'a, W, H> {
         self.rows.print(&mut self.fbuf);
 
         self.display.eat_framebuffer(self.fbuf.as_slice()).unwrap();
+    }
+}
+
+pub struct OwnedTerminal<'a, const W: usize, const H: usize> {
+    _buffer: Vec<u16>,
+    terminal: FbTerminal<'a, W, H>,
+}
+
+impl<'a, const W: usize, const H: usize> OwnedTerminal<'a, W, H> {
+    pub fn new(display: &'a mut impl FramebufferTarget) -> Self {
+        let mut buffer = vec![0u16; W * H];
+        let terminal = FbTerminal::new(buffer.as_mut_ptr(), display);
+        Self {
+            _buffer: buffer,
+            terminal,
+        }
+    }
+
+    pub fn command_line_mut(&mut self) -> &mut CommandLine {
+        &mut self.terminal.command_line
+    }
+}
+
+impl<'a, const W: usize, const H: usize> Deref for OwnedTerminal<'a, W, H> {
+    type Target = FbTerminal<'a, W, H>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.terminal
+    }
+}
+
+impl<'a, const W: usize, const H: usize> DerefMut for OwnedTerminal<'a, W, H> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.terminal
     }
 }

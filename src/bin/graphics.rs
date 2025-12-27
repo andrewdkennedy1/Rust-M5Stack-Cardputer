@@ -1,13 +1,14 @@
 use std::f32::consts::PI;
-use std::ffi::c_void;
-use std::io::Read;
 use std::fs::File;
+use std::io::Read;
 
 use cardputer::{
-    fs::{self, SdCard},
-    hal::cardputer_peripherals,
+    hotkeys,
     keyboard,
-    swapchain::DoubleBuffer,
+    os::{chainload, storage, ui},
+    runtime,
+    swapchain::OwnedDoubleBuffer,
+    SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 use embedded_gfx::mesh::K3dMesh;
 use embedded_gfx::{
@@ -23,7 +24,6 @@ use embedded_graphics::{
     text::Text,
 };
 use embedded_graphics_core::pixelcolor::{Rgb565, WebColors};
-use esp_idf_svc::hal::peripherals;
 use load_stl::embed_stl;
 use log::info;
 use nalgebra::Point3;
@@ -123,42 +123,32 @@ fn load_stl_from_path(path: &str, default_geometry: Geometry<'static>) -> StlDat
     }
 }
 
+fn build_mesh(stl: &StlData) -> K3dMesh {
+    let mut mesh = K3dMesh::new(stl.as_geometry());
+    mesh.set_render_mode(RenderMode::Lines);
+    mesh.set_scale(2.0);
+    mesh.set_color(Rgb565::CSS_RED);
+    mesh
+}
+
 #[allow(clippy::approx_constant)]
 fn main() {
-    esp_idf_svc::sys::link_patches();
+    runtime::init();
 
-    esp_idf_svc::log::EspLogger::initialize_default();
+    let (cardputer, _modem) = runtime::take_cardputer();
+    let cardputer::hal::CardputerPeripherals {
+        display,
+        mut keyboard,
+        speaker: _,
+    } = cardputer;
 
-    let peripherals = peripherals::Peripherals::take().unwrap();
-
-    let mut p = cardputer_peripherals(
-        peripherals.pins,
-        peripherals.spi2,
-        peripherals.ledc,
-        peripherals.i2s0,
-    );
-
-    let mut raw_framebuffer_0 = Box::new([0u16; 240 * 135]);
-    let mut raw_framebuffer_1 = Box::new([0u16; 240 * 135]);
-
-    let mut buffers = DoubleBuffer::<240, 135>::new(
-        raw_framebuffer_0.as_mut_ptr() as *mut c_void,
-        raw_framebuffer_1.as_mut_ptr() as *mut c_void,
-    );
-
-    buffers.start_thread(p.display);
+    let mut buffers = OwnedDoubleBuffer::<SCREEN_WIDTH, SCREEN_HEIGHT>::new();
+    buffers.start_thread(display);
 
     let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
 
     // Try mount SD
-    let _sd = SdCard::new(
-        "/sdcard",
-        esp_idf_svc::sys::spi_host_device_t_SPI3_HOST,
-        39,
-        14, // MOSI
-        40, // SCK
-        12, // CS
-    ).ok();
+    let _sd = storage::mount_sd_card();
 
     info!("creating 3d scene");
     //
@@ -174,31 +164,26 @@ fn main() {
     });
     ground.set_color(Rgb565::new(0, 255, 0));
 
-    let suzanne_data = load_stl_from_path("/sdcard/3d/Suzanne.stl", embed_stl!("src/bin/3d objects/Suzanne.stl"));
-    let mut suzanne = K3dMesh::new(suzanne_data.as_geometry());
-    suzanne.set_render_mode(RenderMode::Lines);
-    suzanne.set_scale(2.0);
-    suzanne.set_color(Rgb565::CSS_RED);
+    let default_geometry = embed_stl!("src/bin/3d objects/Suzanne.stl");
+    let stl_entries = storage::list_files_with_extension(storage::SD_MODELS_PATH, "stl");
+    let mut stl_index = 0usize;
+    let mut current_stl = if stl_entries.is_empty() {
+        load_stl_from_path("embedded", default_geometry)
+    } else {
+        load_stl_from_path(&stl_entries[stl_index].path, default_geometry)
+    };
+    let mut current_mesh = build_mesh(&current_stl);
 
-    let teapot_data = load_stl_from_path("/sdcard/3d/Teapot.stl", embed_stl!("src/bin/3d objects/Teapot_low.stl"));
-    let mut teapot = K3dMesh::new(teapot_data.as_geometry());
-    teapot.set_position(-10.0, 0.0, 0.0);
-    teapot.set_color(Rgb565::CSS_BLUE_VIOLET);
-
-    let blahaj_data = load_stl_from_path("/sdcard/3d/blahaj.stl", embed_stl!("src/bin/3d objects/blahaj.stl"));
-    let mut blahaj = K3dMesh::new(blahaj_data.as_geometry());
-    blahaj.set_color(Rgb565::new(105 >> 3, 150 >> 2, 173 >> 3));
-    blahaj.set_render_mode(RenderMode::SolidLightDir(nalgebra::Vector3::new(
-        -1.0, 0.0, 0.0,
-    )));
-
-    let mut engine = K3dengine::new(240, 135);
+    let mut engine = K3dengine::new(SCREEN_WIDTH as _, SCREEN_HEIGHT as _);
     engine.camera.set_position(Point3::new(0.0, 2.0, -2.0));
     engine.camera.set_target(Point3::new(0.0, 0.0, 0.0));
     engine.camera.set_fovy(PI / 4.0);
 
     let mut perf = PerformanceCounter::new();
     perf.only_fps(true);
+
+    let list_header = format!("STL files ({})", storage::SD_MODELS_PATH);
+    let list_hint = "[ / ] to switch".to_string();
 
     let mut moving_parameter: f32 = 0.0;
 
@@ -217,7 +202,10 @@ fn main() {
         let walking_speed = 5.0 * dt;
         let turning_speed = 0.6 * dt;
 
-        let keys = p.keyboard.read_keys();
+        let keys = keyboard.read_keys();
+        if hotkeys::action_from_keys(&keys) == Some(hotkeys::SystemAction::ReturnToOs) {
+            chainload::reboot_to_factory();
+        }
         for key in keys {
             match key {
                 keyboard::Key::Semicolon => {
@@ -254,31 +242,70 @@ fn main() {
             }
         }
 
+
+        if let Some((keyboard::KeyEvent::Pressed, key)) = keyboard.read_events() {
+            match key {
+                keyboard::Key::LeftSquareBracket => {
+                    if !stl_entries.is_empty() {
+                        stl_index = (stl_index + stl_entries.len() - 1) % stl_entries.len();
+                        current_stl = load_stl_from_path(&stl_entries[stl_index].path, default_geometry);
+                        current_mesh = build_mesh(&current_stl);
+                    }
+                }
+                keyboard::Key::RightSquareBracket => {
+                    if !stl_entries.is_empty() {
+                        stl_index = (stl_index + 1) % stl_entries.len();
+                        current_stl = load_stl_from_path(&stl_entries[stl_index].path, default_geometry);
+                        current_mesh = build_mesh(&current_stl);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         engine.camera.set_position(player_pos);
 
         let lookat = player_pos
             + nalgebra::Vector3::new(player_dir.cos(), player_head.sin(), player_dir.sin());
         engine.camera.set_target(lookat);
 
-        suzanne.set_attitude(-PI / 2.0, moving_parameter * 2.0, 0.0);
-        suzanne.set_position(0.0, 0.7 + (moving_parameter * 3.4).sin() * 0.2, 10.0);
-
-        blahaj.set_attitude(-PI / 2.0, moving_parameter * 2.0, 0.0);
-        blahaj.set_position(0.0, 0.7 + (moving_parameter * 3.4).sin() * 0.2, 0.0);
-
-        teapot.set_attitude(-PI / 2.0, moving_parameter * 1.0, 0.0);
-        teapot.set_scale(0.2 + 0.1 * (moving_parameter * 5.0).sin());
+        current_mesh.set_attitude(-PI / 2.0, moving_parameter * 1.0, 0.0);
+        current_mesh.set_position(0.0, 0.7 + (moving_parameter * 2.0).sin() * 0.2, 2.0);
 
         perf.add_measurement("setup");
 
         //fbuf.clear(Rgb565::CSS_BLACK).unwrap(); // 2.2ms
 
         perf.add_measurement("clear");
-        engine.render([&ground, &teapot, &suzanne, &blahaj], |p| draw(p, fbuf));
+        engine.render([&ground, &current_mesh], |p| draw(p, fbuf));
 
         perf.add_measurement("render");
 
-        Text::new(perf.get_text(), Point::new(20, 20), text_style)
+        Text::new(&list_header, Point::new(4, 4), text_style)
+            .draw(fbuf)
+            .unwrap();
+
+        ui::draw_selectable_list(
+            fbuf,
+            &stl_entries,
+            stl_index,
+            16,
+            12,
+            6,
+            4,
+            Rgb565::CSS_WHITE,
+            Rgb565::CSS_GREEN,
+            "> ",
+            "  ",
+            "No STL files found",
+            |entry| entry.name.clone(),
+        );
+
+        Text::new(&list_hint, Point::new(4, 128), text_style)
+            .draw(fbuf)
+            .unwrap();
+
+        Text::new(perf.get_text(), Point::new(140, 20), text_style)
             .draw(fbuf)
             .unwrap();
 

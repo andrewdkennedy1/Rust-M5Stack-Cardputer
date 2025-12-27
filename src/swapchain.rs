@@ -1,9 +1,9 @@
 use std::{
     ffi::c_void,
+    ops::{Deref, DerefMut},
     sync::{Arc, Mutex},
 };
 
-use crate::display_driver::FramebufferTarget;
 use display_interface_spi::SPIInterface;
 use embedded_gfx::framebuffer::DmaReadyFramebuffer;
 use esp_idf_hal::{
@@ -78,8 +78,8 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
             unsafe {
                 let _lock = mutex2.lock().unwrap();
 
-                let ptr = ptr as *mut [u16; 240 * 135];
-                let ptr = &mut *ptr;
+                let ptr = ptr as *mut u16;
+                let ptr = std::slice::from_raw_parts_mut(ptr, W * H);
 
                 // takes about 12ms
                 // 83 fps limit
@@ -116,5 +116,41 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
         if let Some(sender) = &self.sender {
             sender.send(fbuf.framebuffer as usize).unwrap();
         }
+    }
+}
+
+pub struct OwnedDoubleBuffer<const W: usize, const H: usize> {
+    buffers: DoubleBuffer<W, H>,
+    _fb0: Vec<u16>,
+    _fb1: Vec<u16>,
+}
+
+impl<const W: usize, const H: usize> OwnedDoubleBuffer<W, H> {
+    pub fn new() -> Self {
+        let mut fb0 = vec![0u16; W * H];
+        let mut fb1 = vec![0u16; W * H];
+        let buffers = DoubleBuffer::new(
+            fb0.as_mut_ptr() as *mut c_void,
+            fb1.as_mut_ptr() as *mut c_void,
+        );
+        Self {
+            buffers,
+            _fb0: fb0,
+            _fb1: fb1,
+        }
+    }
+}
+
+impl<const W: usize, const H: usize> Deref for OwnedDoubleBuffer<W, H> {
+    type Target = DoubleBuffer<W, H>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffers
+    }
+}
+
+impl<const W: usize, const H: usize> DerefMut for OwnedDoubleBuffer<W, H> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffers
     }
 }

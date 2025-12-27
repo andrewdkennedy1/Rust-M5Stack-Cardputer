@@ -12,6 +12,8 @@ use esp_idf_svc::http::Method;
 use esp_idf_svc::io::Write as HttpWrite;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys;
+
+use super::chainload;
 use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -295,19 +297,9 @@ fn launch_http(sd_root: Option<PathBuf>, state: WifiStateHandle) -> ServerResult
     server.fn_handler("/api/reboot_factory", Method::Post, move |req| {
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         resp.write_all(b"Rebooting to Factory OS...").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        unsafe {
-            let factory = sys::esp_partition_find_first(
-                sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP,
-                sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_FACTORY,
-                core::ptr::null(),
-            );
-            if !factory.is_null() {
-                sys::esp_ota_set_boot_partition(factory);
-            }
-            sys::esp_restart();
-        }
-        Ok::<(), Box<dyn std::error::Error>>(())
+        chainload::reboot_to_factory();
     })?;
+
 
     let upload_root = sd_root.clone();
     server.fn_handler("/upload", Method::Post, move |mut req| {
@@ -336,7 +328,8 @@ fn launch_http(sd_root: Option<PathBuf>, state: WifiStateHandle) -> ServerResult
         }
 
         let mut file = File::create(&target).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        let mut buf = [0u8; 4096]; // Larger buffer for faster upload
+        // Avoid blowing the httpd task stack; use a heap buffer instead.
+        let mut buf = vec![0u8; 1024];
         loop {
             let read = req.read(&mut buf).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             if read == 0 { break; }

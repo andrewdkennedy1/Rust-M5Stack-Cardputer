@@ -1,29 +1,23 @@
 use std::f32::consts::PI;
 
 use cardputer::{
-    hal::cardputer_peripherals,
-    terminal::FbTerminal,
+    hotkeys,
+    os::chainload,
+    runtime,
+    terminal::OwnedTerminal,
     typing::{KeyboardEvent, Typing},
     SCREEN_HEIGHT, SCREEN_WIDTH,
 };
-use esp_idf_hal::{io::Write, peripherals};
+use esp_idf_hal::io::Write;
 
 #[allow(clippy::approx_constant)]
 fn main() {
-    esp_idf_svc::sys::link_patches();
+    runtime::init();
 
     // esp_idf_hal::i2s::I2sDriver::new_std_tx(i2s, config, bclk, dout, mclk, ws)
-    let peripherals = peripherals::Peripherals::take().unwrap();
-    let mut p = cardputer_peripherals(
-        peripherals.pins,
-        peripherals.spi2,
-        peripherals.ledc,
-        peripherals.i2s0,
-    );
+    let (mut p, _modem) = runtime::take_cardputer();
 
-    let mut raw_fb = Box::new([0u16; SCREEN_WIDTH * SCREEN_HEIGHT]);
-    let mut terminal =
-        FbTerminal::<SCREEN_WIDTH, SCREEN_HEIGHT>::new(raw_fb.as_mut_ptr(), &mut p.display);
+    let mut terminal = OwnedTerminal::<SCREEN_WIDTH, SCREEN_HEIGHT>::new(&mut p.display);
 
     let mut typing = Typing::new();
 
@@ -34,20 +28,24 @@ fn main() {
     let wav = generate_sine_wave(1.0, 880.0);
 
     loop {
+        if let Some(hotkeys::SystemAction::ReturnToOs) = hotkeys::poll_action(&mut p.keyboard) {
+            chainload::reboot_to_factory();
+        }
+
         let evt = p.keyboard.read_events();
         if let Some(evt) = evt {
             if let Some(evts) = typing.eat_keyboard_events(evt) {
                 match evts {
                     KeyboardEvent::Ascii(c) => {
-                        terminal.command_line.push(c);
+                        terminal.command_line_mut().push(c);
                     }
                     KeyboardEvent::Backspace => {
-                        terminal.command_line.pop();
+                        terminal.command_line_mut().pop();
                     }
                     KeyboardEvent::Enter => {
-                        let text = terminal.command_line.get();
+                        let text = terminal.command_line_mut().get().to_string();
 
-                        match text {
+                        match text.as_str() {
                             "b" => {
                                 p.speaker
                                     .write_all(
@@ -64,7 +62,7 @@ fn main() {
                         terminal.enter();
                     }
                     KeyboardEvent::ArrowUp => {
-                        terminal.command_line.arrow_up();
+                        terminal.command_line_mut().arrow_up();
                     }
                     _ => {}
                 }

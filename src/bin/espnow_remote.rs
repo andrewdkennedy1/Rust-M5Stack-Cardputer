@@ -1,11 +1,12 @@
 use cardputer::{
-    hal::cardputer_peripherals,
-    terminal::FbTerminal,
+    hotkeys,
+    os::chainload,
+    runtime,
+    terminal::OwnedTerminal,
     typing::{KeyboardEvent, Typing},
     SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
-use esp_idf_hal::peripherals;
 use log::info;
 
 use esp_idf_svc::wifi::{AccessPointConfiguration, EspWifi};
@@ -17,29 +18,18 @@ use esp_idf_svc::{
 
 #[allow(clippy::approx_constant)]
 fn main() {
-    esp_idf_svc::sys::link_patches();
-
-    esp_idf_svc::log::EspLogger::initialize_default();
-
-    let peripherals = peripherals::Peripherals::take().unwrap();
+    runtime::init();
 
     let sysloop = EspSystemEventLoop::take().unwrap();
 
-    let mut p = cardputer_peripherals(
-        peripherals.pins,
-        peripherals.spi2,
-        peripherals.ledc,
-        peripherals.i2s0,
-    );
+    let (mut p, modem) = runtime::take_cardputer();
 
-    let mut raw_fb = Box::new([0u16; SCREEN_WIDTH * SCREEN_HEIGHT]);
-    let mut terminal =
-        FbTerminal::<SCREEN_WIDTH, SCREEN_HEIGHT>::new(raw_fb.as_mut_ptr(), &mut p.display);
+    let mut terminal = OwnedTerminal::<SCREEN_WIDTH, SCREEN_HEIGHT>::new(&mut p.display);
     terminal.auto_draw(true);
 
     terminal.println("Espnow Remote");
 
-    let mut wifi = EspWifi::new(peripherals.modem, sysloop.clone(), None).unwrap();
+    let mut wifi = EspWifi::new(modem, sysloop.clone(), None).unwrap();
 
     let client_cfg = ClientConfiguration {
         channel: Some(0),
@@ -93,6 +83,10 @@ fn main() {
     terminal.println("Ready. Type to send");
 
     loop {
+        if let Some(hotkeys::SystemAction::ReturnToOs) = hotkeys::poll_action(&mut p.keyboard) {
+            chainload::reboot_to_factory();
+        }
+
         let evt = p.keyboard.read_events();
         if let Some(evt) = evt {
             if let Some(KeyboardEvent::Ascii(c)) = typing.eat_keyboard_events(evt) {

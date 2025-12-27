@@ -12,6 +12,27 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const FLASH_CHUNK_SIZE: usize = 4096;
 
+pub fn set_factory_boot_partition() -> bool {
+    unsafe {
+        let factory = sys::esp_partition_find_first(
+            sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP,
+            sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_FACTORY,
+            core::ptr::null(),
+        );
+        if !factory.is_null() {
+            sys::esp_ota_set_boot_partition(factory);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+pub fn reboot_to_factory() -> ! {
+    let _ = set_factory_boot_partition();
+    unsafe { sys::esp_restart() }
+}
+
 pub fn ota_partition_available() -> bool {
     let update = unsafe { sys::esp_ota_get_next_update_partition(core::ptr::null()) };
     !update.is_null()

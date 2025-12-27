@@ -1,9 +1,11 @@
 pub mod display_driver;
 pub mod fs;
 pub mod hal;
+pub mod hotkeys;
 pub mod keyboard;
 pub mod loader;
 pub mod os;
+pub mod runtime;
 pub mod swapchain;
 pub mod terminal;
 pub mod typing;
