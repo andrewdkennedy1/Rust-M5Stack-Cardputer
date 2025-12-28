@@ -3,11 +3,14 @@ use std::path::{Path, PathBuf};
 
 use crate::keyboard::{CardputerKeyboard, Key, KeyEvent};
 
+use super::live_apps::LiveAppKind;
+
 #[derive(Clone, Debug)]
 pub enum MenuItem {
     Back,
     Dir(PathBuf),
     App(PathBuf),
+    LiveApp(LiveAppKind, PathBuf),
 }
 
 #[derive(Debug)]
@@ -82,7 +85,7 @@ impl MenuState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MenuAction {
     Up,
     Down,
@@ -125,6 +128,8 @@ fn read_menu_items(root: &Path, current: &Path) -> std::io::Result<Vec<MenuItem>
 
         if path.is_dir() {
             items.push(MenuItem::Dir(path));
+        } else if let Some(kind) = live_app_kind_for_path(&path) {
+            items.push(MenuItem::LiveApp(kind, path));
         } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             if ext.eq_ignore_ascii_case("bin") {
                 items.push(MenuItem::App(path));
@@ -145,7 +150,8 @@ fn item_sort_key(item: &MenuItem) -> (u8, String) {
     match item {
         MenuItem::Back => (0, String::new()),
         MenuItem::Dir(path) => (1, path_display_name(path)),
-        MenuItem::App(path) => (2, path_display_name(path)),
+        MenuItem::LiveApp(_, path) => (2, path_display_name(path)),
+        MenuItem::App(path) => (3, path_display_name(path)),
     }
 }
 
@@ -165,10 +171,23 @@ pub fn display_name(item: &MenuItem) -> String {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| String::from("?"))
         ),
+        MenuItem::LiveApp(_, path) => path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| String::from("?")),
         MenuItem::App(path) => path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| String::from("?")),
+    }
+}
+
+fn live_app_kind_for_path(path: &Path) -> Option<LiveAppKind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "wasm" => Some(LiveAppKind::Wasm),
+        "py" | "mpy" => Some(LiveAppKind::Python),
+        _ => None,
     }
 }
 

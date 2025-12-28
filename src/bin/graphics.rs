@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 use std::fs::File;
 use std::io::Read;
+use std::time::Duration;
 
 use cardputer::{
     hotkeys,
@@ -19,6 +20,7 @@ use embedded_gfx::{
 };
 use embedded_graphics::Drawable;
 use embedded_graphics::{
+    draw_target::DrawTarget,
     geometry::Point,
     mono_font::{ascii::FONT_6X10, MonoTextStyle},
     text::Text,
@@ -69,10 +71,18 @@ impl StlData {
 
 // Simple parsing: Triangle soup (no deduplication for speed/simplicity)
 fn parse_stl(bytes: &[u8]) -> Option<StlData> {
-    if bytes.len() < 84 { return None; }
-    
+    parse_stl_binary(bytes).or_else(|| parse_stl_ascii(bytes))
+}
+
+fn parse_stl_binary(bytes: &[u8]) -> Option<StlData> {
+    if bytes.len() < 84 {
+        return None;
+    }
+
     let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
-    if bytes.len() < 84 + count * 50 { return None; }
+    if bytes.len() < 84 + count * 50 {
+        return None;
+    }
 
     let mut vertices = Vec::with_capacity(count * 3);
     let mut faces = Vec::with_capacity(count);
@@ -83,18 +93,14 @@ fn parse_stl(bytes: &[u8]) -> Option<StlData> {
         offset += 12;
 
         for _ in 0..3 {
-           let x = f32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
-           let y = f32::from_le_bytes(bytes[offset+4..offset+8].try_into().unwrap());
-           let z = f32::from_le_bytes(bytes[offset+8..offset+12].try_into().unwrap());
-           vertices.push([x, y, z]);
-           offset += 12;
+            let x = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+            let y = f32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
+            let z = f32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap());
+            vertices.push([x, y, z]);
+            offset += 12;
         }
 
-        faces.push([
-            (i * 3) as usize, 
-            (i * 3 + 1) as usize, 
-            (i * 3 + 2) as usize
-        ]);
+        faces.push([(i * 3) as usize, (i * 3 + 1) as usize, (i * 3 + 2) as usize]);
 
         // attribute byte count (2 bytes)
         offset += 2;
@@ -103,8 +109,42 @@ fn parse_stl(bytes: &[u8]) -> Option<StlData> {
     Some(StlData { vertices, faces })
 }
 
+fn parse_stl_ascii(bytes: &[u8]) -> Option<StlData> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return None;
+    };
 
-fn load_stl_from_path(path: &str, default_geometry: Geometry<'static>) -> StlData {
+    let mut vertices = Vec::new();
+    let mut faces = Vec::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with("vertex ") {
+            continue;
+        }
+
+        let mut parts = line.split_whitespace();
+        parts.next();
+        let x = parts.next()?.parse::<f32>().ok()?;
+        let y = parts.next()?.parse::<f32>().ok()?;
+        let z = parts.next()?.parse::<f32>().ok()?;
+        vertices.push([x, y, z]);
+
+        if vertices.len() % 3 == 0 {
+            let i = vertices.len() - 3;
+            faces.push([i, i + 1, i + 2]);
+        }
+    }
+
+    if faces.is_empty() {
+        return None;
+    }
+
+    Some(StlData { vertices, faces })
+}
+
+
+fn load_stl_from_path(path: &str, default_geometry: &Geometry<'_>) -> StlData {
     if let Ok(mut file) = File::open(path) {
         let mut buffer = Vec::new();
         if file.read_to_end(&mut buffer).is_ok() {
@@ -129,6 +169,86 @@ fn build_mesh(stl: &StlData) -> K3dMesh {
     mesh.set_scale(2.0);
     mesh.set_color(Rgb565::CSS_RED);
     mesh
+}
+
+fn select_stl_index(
+    buffers: &mut OwnedDoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
+    keyboard: &mut keyboard::CardputerKeyboard<'static>,
+    stl_entries: &[storage::SdFileEntry],
+) -> Option<usize> {
+    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+    let header = format!("Select STL ({})", storage::SD_MODELS_PATH);
+    let hint = "Up/Down: ;/. Enter: load Back: Backspace";
+    let mut selected = 0usize;
+
+    loop {
+        let fbuf = buffers.swap_framebuffer();
+        let _ = fbuf.clear(Rgb565::CSS_BLACK);
+
+        Text::new(&header, Point::new(4, 4), text_style)
+            .draw(fbuf)
+            .ok();
+
+        ui::draw_selectable_list(
+            fbuf,
+            stl_entries,
+            selected,
+            20,
+            12,
+            8,
+            4,
+            Rgb565::CSS_WHITE,
+            Rgb565::CSS_GREEN,
+            "> ",
+            "  ",
+            "No STL files found",
+            |entry| entry.name.clone(),
+        );
+
+        Text::new(hint, Point::new(4, 128), text_style)
+            .draw(fbuf)
+            .ok();
+
+        buffers.send_framebuffer();
+
+        if hotkeys::action_from_keys(&keyboard.read_keys())
+            == Some(hotkeys::SystemAction::ReturnToOs)
+        {
+            chainload::reboot_to_factory();
+        }
+
+        if let Some((keyboard::KeyEvent::Pressed, key)) = keyboard.read_events() {
+            match key {
+                keyboard::Key::Semicolon | keyboard::Key::W => {
+                    if !stl_entries.is_empty() {
+                        if selected == 0 {
+                            selected = stl_entries.len() - 1;
+                        } else {
+                            selected -= 1;
+                        }
+                    }
+                }
+                keyboard::Key::Period | keyboard::Key::S => {
+                    if !stl_entries.is_empty() {
+                        selected = (selected + 1) % stl_entries.len();
+                    }
+                }
+                keyboard::Key::Enter => {
+                    return if stl_entries.is_empty() {
+                        None
+                    } else {
+                        Some(selected)
+                    };
+                }
+                keyboard::Key::Backspace | keyboard::Key::Slash => {
+                    chainload::reboot_to_factory();
+                }
+                _ => {}
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 #[allow(clippy::approx_constant)]
@@ -166,11 +286,11 @@ fn main() {
 
     let default_geometry = embed_stl!("src/bin/3d objects/Suzanne.stl");
     let stl_entries = storage::list_files_with_extension(storage::SD_MODELS_PATH, "stl");
-    let mut stl_index = 0usize;
-    let mut current_stl = if stl_entries.is_empty() {
-        load_stl_from_path("embedded", default_geometry)
+    let selected_index = select_stl_index(&mut buffers, &mut keyboard, &stl_entries);
+    let current_stl = if let Some(index) = selected_index {
+        load_stl_from_path(&stl_entries[index].path, &default_geometry)
     } else {
-        load_stl_from_path(&stl_entries[stl_index].path, default_geometry)
+        load_stl_from_path("embedded", &default_geometry)
     };
     let mut current_mesh = build_mesh(&current_stl);
 
@@ -181,9 +301,6 @@ fn main() {
 
     let mut perf = PerformanceCounter::new();
     perf.only_fps(true);
-
-    let list_header = format!("STL files ({})", storage::SD_MODELS_PATH);
-    let list_hint = "[ / ] to switch".to_string();
 
     let mut moving_parameter: f32 = 0.0;
 
@@ -243,26 +360,6 @@ fn main() {
         }
 
 
-        if let Some((keyboard::KeyEvent::Pressed, key)) = keyboard.read_events() {
-            match key {
-                keyboard::Key::LeftSquareBracket => {
-                    if !stl_entries.is_empty() {
-                        stl_index = (stl_index + stl_entries.len() - 1) % stl_entries.len();
-                        current_stl = load_stl_from_path(&stl_entries[stl_index].path, default_geometry);
-                        current_mesh = build_mesh(&current_stl);
-                    }
-                }
-                keyboard::Key::RightSquareBracket => {
-                    if !stl_entries.is_empty() {
-                        stl_index = (stl_index + 1) % stl_entries.len();
-                        current_stl = load_stl_from_path(&stl_entries[stl_index].path, default_geometry);
-                        current_mesh = build_mesh(&current_stl);
-                    }
-                }
-                _ => {}
-            }
-        }
-
         engine.camera.set_position(player_pos);
 
         let lookat = player_pos
@@ -280,30 +377,6 @@ fn main() {
         engine.render([&ground, &current_mesh], |p| draw(p, fbuf));
 
         perf.add_measurement("render");
-
-        Text::new(&list_header, Point::new(4, 4), text_style)
-            .draw(fbuf)
-            .unwrap();
-
-        ui::draw_selectable_list(
-            fbuf,
-            &stl_entries,
-            stl_index,
-            16,
-            12,
-            6,
-            4,
-            Rgb565::CSS_WHITE,
-            Rgb565::CSS_GREEN,
-            "> ",
-            "  ",
-            "No STL files found",
-            |entry| entry.name.clone(),
-        );
-
-        Text::new(&list_hint, Point::new(4, 128), text_style)
-            .draw(fbuf)
-            .unwrap();
 
         Text::new(perf.get_text(), Point::new(140, 20), text_style)
             .draw(fbuf)

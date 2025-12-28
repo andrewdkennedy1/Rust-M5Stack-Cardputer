@@ -176,6 +176,20 @@ pub enum KeyEvent {
     Released,
 }
 
+pub fn key_code(key: Key) -> u8 {
+    KEY_MAP
+        .iter()
+        .position(|mapped| *mapped == key)
+        .unwrap_or(0) as u8
+}
+
+pub fn key_event_code(event: KeyEvent) -> u8 {
+    match event {
+        KeyEvent::Pressed => 1,
+        KeyEvent::Released => 0,
+    }
+}
+
 const KEY_MAP: [Key; 56] = [
     Key::Opt,
     Key::Z,

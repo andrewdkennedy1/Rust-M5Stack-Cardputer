@@ -1,0 +1,6 @@
+[submodule "components/wasm3"]
+	path = components/wasm3
+	url = https://github.com/wasm3/wasm3
+[submodule "components/micropython"]
+	path = components/micropython
+	url = https://github.com/micropython/micropython

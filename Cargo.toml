@@ -46,3 +46,8 @@ serde_json = "1.0"
 
 [build-dependencies]
 embuild = "0.33"
+
+[package.metadata.esp-idf-sys]
+extra_components = [
+  { component_dirs = ["components/wasm3", "components/micropython_embed"] }
+]
