@@ -51,6 +51,15 @@ struct FileEntry {
     size: u64,
 }
 
+/// Returns a placeholder wifi state for when WiFi is disabled.
+pub fn wifi_disabled_state() -> WifiStateHandle {
+    Arc::new(Mutex::new(WifiState {
+        mode: WifiMode::Station,
+        ssid: "WiFi off".to_string(),
+        ip: None,
+    }))
+}
+
 pub fn start_wifi_file_server(
     modem: Modem,
     sd_root: Option<PathBuf>,
@@ -63,15 +72,24 @@ pub fn start_wifi_file_server(
         ip: None,
     }));
 
+    const WIFI_THREAD_STACK_BYTES: usize = 16 * 1024;
+
     let state_thread = state.clone();
-    thread::Builder::new()
-        .stack_size(32768)
+    let spawn_result = thread::Builder::new()
+        .stack_size(WIFI_THREAD_STACK_BYTES)
         .spawn(move || {
             if let Err(err) = bringup_wifi_and_server(modem, sd_root, state_thread, screen_capture, control_tx) {
                 error!("WiFi file server failed: {:?}", err);
             }
-        })
-        .unwrap();
+        });
+
+    if let Err(err) = spawn_result {
+        error!("Failed to spawn WiFi file server thread: {:?}", err);
+        if let Ok(mut guard) = state.lock() {
+            guard.ssid = "WiFi disabled (low mem)".to_string();
+            guard.ip = None;
+        }
+    }
 
     state
 }
@@ -187,10 +205,27 @@ fn launch_http(
         ..Default::default()
     })?;
 
-    let index_body = render_index(&state);
+    let index_state = state.clone();
     server.fn_handler("/", Method::Get, move |req| {
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(index_body.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        
+        // Get dynamic values (small allocations)
+        let (ssid, ip) = if let Ok(guard) = index_state.lock() {
+            (
+                guard.ssid.clone(),
+                guard.ip.clone().unwrap_or_default(),
+            )
+        } else {
+            ("Cardputer-RustOS".to_string(), String::new())
+        };
+        
+        // Stream HTML from const parts (in Flash) - no heap allocation for the large parts
+        resp.write_all(INDEX_HTML_PART1).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        resp.write_all(ssid.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        resp.write_all(INDEX_HTML_PART2).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        resp.write_all(ip.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        resp.write_all(INDEX_HTML_PART3).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
@@ -435,22 +470,16 @@ fn launch_http(
     Ok(server)
 }
 
-fn render_index(state: &WifiStateHandle) -> String {
-    let guard = state.lock().ok();
-    let (ssid, ip) = guard
-        .as_deref()
-        .map(|s| (s.ssid.clone(), s.ip.clone().unwrap_or_else(|| "".to_string())))
-        .unwrap_or_else(|| ("Cardputer-RustOS".to_string(), String::new()));
-
-    format!(
-        r#"<!doctype html>
+// HTML template split into const parts (stored in Flash, not heap)
+// PART1: From start to just before {ssid}
+const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cardputer RustOS | Web UI</title>
     <style>
-        :root {{
+        :root {
             --bg-color: #f6f1e7;
             --glass-bg: rgba(255, 255, 255, 0.78);
             --glass-border: rgba(39, 46, 58, 0.12);
@@ -459,10 +488,10 @@ fn render_index(state: &WifiStateHandle) -> String {
             --text-main: #2a2a2a;
             --text-dim: #61656c;
             --danger: #c2413d;
-        }}
+        }
 
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
             font-family: 'Space Grotesk', 'Avenir Next', 'Trebuchet MS', sans-serif;
             background: var(--bg-color);
             background-image:
@@ -475,9 +504,9 @@ fn render_index(state: &WifiStateHandle) -> String {
             display: flex;
             justify-content: center;
             padding: 2rem;
-        }}
+        }
 
-        .container {{
+        .container {
             width: 100%;
             max-width: 900px;
             background: var(--glass-bg);
@@ -488,60 +517,60 @@ fn render_index(state: &WifiStateHandle) -> String {
             padding: 2.5rem;
             box-shadow: 0 24px 40px rgba(30, 36, 45, 0.18);
             animation: fadeIn 0.6s ease both;
-        }}
+        }
 
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(6px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-        @keyframes riseIn {{
-            from {{ opacity: 0; transform: translateY(14px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
+        @keyframes riseIn {
+            from { opacity: 0; transform: translateY(14px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-        header {{
+        header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 2rem;
-        }}
+        }
 
-        .brand {{ display: flex; align-items: center; gap: 12px; }}
-        .brand h1 {{ font-family: 'Fraunces', 'Palatino Linotype', serif; font-size: 1.6rem; font-weight: 700; letter-spacing: 0.02em; background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand h1 { font-family: 'Fraunces', 'Palatino Linotype', serif; font-size: 1.6rem; font-weight: 700; letter-spacing: 0.02em; background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         
-        .info {{ text-align: right; font-size: 0.875rem; color: var(--text-dim); }}
-        .info span {{ display: block; }}
+        .info { text-align: right; font-size: 0.875rem; color: var(--text-dim); }
+        .info span { display: block; }
 
-        .dashboard {{
+        .dashboard {
             display: grid;
             grid-template-columns: 1.2fr 0.8fr;
             gap: 20px;
             margin-bottom: 2rem;
-        }}
+        }
 
-        .panel {{
+        .panel {
             background: rgba(255, 255, 255, 0.62);
             border-radius: 20px;
             border: 1px solid var(--glass-border);
             padding: 1.5rem;
             box-shadow: 0 14px 24px rgba(36, 42, 52, 0.08);
             animation: riseIn 0.7s ease both;
-        }}
+        }
 
-        .dashboard .panel:nth-child(2) {{ animation-delay: 0.08s; }}
+        .dashboard .panel:nth-child(2) { animation-delay: 0.08s; }
 
-        .panel-header {{
+        .panel-header {
             display: flex;
             justify-content: space-between;
             align-items: baseline;
             margin-bottom: 1rem;
-        }}
+        }
 
-        .panel-header h2 {{ font-size: 0.9rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }}
-        .panel-sub {{ font-size: 0.75rem; color: var(--text-dim); }}
+        .panel-header h2 { font-size: 0.9rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+        .panel-sub { font-size: 0.75rem; color: var(--text-dim); }
 
-        .screen-frame {{
+        .screen-frame {
             position: relative;
             background: rgba(255, 255, 255, 0.6);
             border-radius: 16px;
@@ -550,9 +579,9 @@ fn render_index(state: &WifiStateHandle) -> String {
             display: flex;
             justify-content: center;
             align-items: center;
-        }}
+        }
 
-        #screenImg {{
+        #screenImg {
             width: 100%;
             max-width: 420px;
             aspect-ratio: 240 / 135;
@@ -560,9 +589,9 @@ fn render_index(state: &WifiStateHandle) -> String {
             border-radius: 10px;
             border: 1px solid rgba(0,0,0,0.08);
             background: #111418;
-        }}
+        }
 
-        .screen-badge {{
+        .screen-badge {
             position: absolute;
             top: 10px;
             left: 12px;
@@ -572,23 +601,23 @@ fn render_index(state: &WifiStateHandle) -> String {
             border-radius: 999px;
             background: rgba(42, 127, 122, 0.2);
             border: 1px solid rgba(42, 127, 122, 0.45);
-        }}
+        }
 
-        .screen-badge.paused {{
+        .screen-badge.paused {
             background: rgba(97, 101, 108, 0.16);
             border-color: rgba(97, 101, 108, 0.32);
-        }}
+        }
 
-        .screen-meta {{
+        .screen-meta {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-top: 0.75rem;
             font-size: 0.8rem;
             color: var(--text-dim);
-        }}
+        }
 
-        .btn-soft {{
+        .btn-soft {
             background: rgba(255, 255, 255, 0.8);
             border: 1px solid var(--glass-border);
             color: var(--text-main);
@@ -597,21 +626,21 @@ fn render_index(state: &WifiStateHandle) -> String {
             font-size: 0.75rem;
             cursor: pointer;
             transition: 0.2s;
-        }}
+        }
 
-        .btn-soft:hover {{
+        .btn-soft:hover {
             background: rgba(255, 255, 255, 0.96);
-        }}
+        }
 
-        .control-pad {{
+        .control-pad {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 10px;
             align-items: center;
             justify-items: center;
-        }}
+        }
 
-        .ctrl-btn {{
+        .ctrl-btn {
             width: 100%;
             padding: 10px 12px;
             border-radius: 12px;
@@ -621,41 +650,41 @@ fn render_index(state: &WifiStateHandle) -> String {
             font-weight: 600;
             cursor: pointer;
             transition: 0.2s;
-        }}
+        }
 
-        .ctrl-btn:hover {{
+        .ctrl-btn:hover {
             background: rgba(255, 255, 255, 0.96);
             transform: translateY(-1px);
-        }}
+        }
 
-        .ctrl-btn.primary {{
+        .ctrl-btn.primary {
             background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
             border: none;
-        }}
+        }
 
-        .control-hint {{
+        .control-hint {
             margin-top: 0.75rem;
             font-size: 0.75rem;
             color: var(--text-dim);
             text-align: center;
-        }}
+        }
 
-        .control-spacer {{
+        .control-spacer {
             height: 100%;
             width: 100%;
-        }}
+        }
 
-        .breadcrumb {{
+        .breadcrumb {
             display: flex;
             gap: 8px;
             margin-bottom: 1.5rem;
             font-size: 0.875rem;
             color: var(--text-dim);
-        }}
-        .breadcrumb span {{ cursor: pointer; color: var(--text-main); }}
-        .breadcrumb span:hover {{ text-decoration: underline; }}
+        }
+        .breadcrumb span { cursor: pointer; color: var(--text-main); }
+        .breadcrumb span:hover { text-decoration: underline; }
 
-        .file-list {{
+        .file-list {
             background: rgba(255, 255, 255, 0.7);
             border-radius: 16px;
             overflow: hidden;
@@ -663,9 +692,9 @@ fn render_index(state: &WifiStateHandle) -> String {
             box-shadow: 0 12px 22px rgba(33, 40, 52, 0.06);
             animation: riseIn 0.7s ease both;
             animation-delay: 0.12s;
-        }}
+        }
 
-        .file-item {{
+        .file-item {
             display: grid;
             grid-template-columns: auto 1fr auto auto;
             align-items: center;
@@ -673,28 +702,28 @@ fn render_index(state: &WifiStateHandle) -> String {
             gap: 16px;
             border-bottom: 1px solid var(--glass-border);
             transition: background 0.2s;
-        }}
-        .file-item:last-child {{ border-bottom: none; }}
-        .file-item:hover {{ background: rgba(42, 127, 122, 0.06); }}
+        }
+        .file-item:last-child { border-bottom: none; }
+        .file-item:hover { background: rgba(42, 127, 122, 0.06); }
 
-        .icon {{ width: 20px; height: 20px; color: var(--accent-primary); }}
-        .name {{ font-size: 0.9375rem; font-weight: 500; cursor: pointer; }}
-        .size {{ font-size: 0.8125rem; color: var(--text-dim); }}
+        .icon { width: 20px; height: 20px; color: var(--accent-primary); }
+        .name { font-size: 0.9375rem; font-weight: 500; cursor: pointer; }
+        .size { font-size: 0.8125rem; color: var(--text-dim); }
         
-        .actions {{ display: flex; gap: 8px; }}
-        .btn-action {{ color: var(--accent-primary); background: none; border: none; cursor: pointer; transition: 0.2s; padding: 4px; }}
-        .btn-action:hover {{ transform: scale(1.1); filter: brightness(1.2); }}
-        .btn-del {{ color: var(--danger); background: none; border: none; cursor: pointer; opacity: 0.6; transition: 0.2s; padding: 4px; }}
-        .btn-del:hover {{ opacity: 1; transform: scale(1.1); }}
+        .actions { display: flex; gap: 8px; }
+        .btn-action { color: var(--accent-primary); background: none; border: none; cursor: pointer; transition: 0.2s; padding: 4px; }
+        .btn-action:hover { transform: scale(1.1); filter: brightness(1.2); }
+        .btn-del { color: var(--danger); background: none; border: none; cursor: pointer; opacity: 0.6; transition: 0.2s; padding: 4px; }
+        .btn-del:hover { opacity: 1; transform: scale(1.1); }
 
-        .btn-main {{ 
+        .btn-main { 
             background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
             border: none; color: white; padding: 10px 20px; border-radius: 12px; font-weight: 600; cursor: pointer; margin-bottom: 1rem;
             transition: 0.3s; box-shadow: 0 6px 16px rgba(42, 127, 122, 0.25);
-        }}
-        .btn-main:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(42, 127, 122, 0.35); }}
+        }
+        .btn-main:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(42, 127, 122, 0.35); }
 
-        .upload-section {{
+        .upload-section {
             margin-top: 2.5rem;
             border: 2px dashed var(--glass-border);
             border-radius: 20px;
@@ -703,37 +732,37 @@ fn render_index(state: &WifiStateHandle) -> String {
             transition: 0.3s;
             animation: riseIn 0.7s ease both;
             animation-delay: 0.16s;
-        }}
-        .upload-section.dragover {{ border-color: var(--accent-primary); background: rgba(42, 127, 122, 0.08); }}
+        }
+        .upload-section.dragover { border-color: var(--accent-primary); background: rgba(42, 127, 122, 0.08); }
         
-        .upload-controls {{ display: flex; justify-content: center; gap: 20px; align-items: center; margin-bottom: 20px; }}
+        .upload-controls { display: flex; justify-content: center; gap: 20px; align-items: center; margin-bottom: 20px; }
 
-        .upload-label {{ display: block; cursor: pointer; }}
-        .upload-label span {{ display: block; margin-bottom: 8px; font-weight: 600; color: var(--accent-primary); }}
-        .upload-label small {{ color: var(--text-dim); }}
+        .upload-label { display: block; cursor: pointer; }
+        .upload-label span { display: block; margin-bottom: 8px; font-weight: 600; color: var(--accent-primary); }
+        .upload-label small { color: var(--text-dim); }
 
-        #fileInput {{ display: none; }}
+        #fileInput { display: none; }
 
-        .progress-container {{
+        .progress-container {
             margin-top: 1.5rem;
             height: 8px;
             background: rgba(0, 0, 0, 0.06);
             border-radius: 4px;
             overflow: hidden;
             display: none;
-        }}
-        .progress-bar {{ height: 100%; width: 0%; background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); transition: width 0.3s; }}
+        }
+        .progress-bar { height: 100%; width: 0%; background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); transition: width 0.3s; }
 
-        @media (prefers-reduced-motion: reduce) {{
-            * {{ animation: none !important; transition: none !important; }}
-        }}
+        @media (prefers-reduced-motion: reduce) {
+            * { animation: none !important; transition: none !important; }
+        }
 
-        @media (max-width: 640px) {{
-            body {{ padding: 1rem; }}
-            .container {{ padding: 1.5rem; }}
-            .dashboard {{ grid-template-columns: 1fr; }}
-            .panel {{ padding: 1.25rem; }}
-        }}
+        @media (max-width: 640px) {
+            body { padding: 1rem; }
+            .container { padding: 1.5rem; }
+            .dashboard { grid-template-columns: 1fr; }
+            .panel { padding: 1.25rem; }
+        }
     </style>
 </head>
 <body>
@@ -744,8 +773,14 @@ fn render_index(state: &WifiStateHandle) -> String {
                 <h1>Cardputer OS</h1>
             </div>
             <div class="info">
-                <span>SSID: <b>{ssid}</b></span>
-                <span>IP: <b>{ip}</b></span>
+                <span>SSID: <b>"#;
+
+// PART2: Between {ssid} and {ip}
+const INDEX_HTML_PART2: &[u8] = br#"</b></span>
+                <span>IP: <b>"#;
+
+// PART3: After {ip} to end
+const INDEX_HTML_PART3: &[u8] = br#"</b></span>
                 <button class="btn-action" style="margin-top: 8px; font-size: 11px; color: var(--text-dim);" onclick="rebootFactory()">Reset Boot to Factory</button>
             </div>
         </header>
@@ -794,7 +829,7 @@ fn render_index(state: &WifiStateHandle) -> String {
         <div class="upload-section" id="dropZone">
             <div class="upload-controls">
                 <button class="btn-main" onclick="mkdir()">+ New Folder</button>
-                <label for="fileInput" class="btn-main" style="margin-bottom: 1rem;">↑ Upload Files</label>
+                <label for="fileInput" class="btn-main" style="margin-bottom: 1rem;">&uarr; Upload Files</label>
             </div>
             <input type="file" id="fileInput" multiple>
             <label for="fileInput" class="upload-label">
@@ -823,38 +858,38 @@ fn render_index(state: &WifiStateHandle) -> String {
         let lastControlTime = 0;
         const CONTROL_THROTTLE_MS = 80;
 
-        function scheduleScreen() {{
+        function scheduleScreen() {
             if (!screenActive) return;
             clearTimeout(screenTimer);
-            screenTimer = setTimeout(() => {{
-                screenImg.src = `/api/screen?ts=${{Date.now()}}`;
-            }}, 200);
-        }}
+            screenTimer = setTimeout(() => {
+                screenImg.src = `/api/screen?ts=${Date.now()}`;
+            }, 200);
+        }
 
-        function toggleScreen() {{
+        function toggleScreen() {
             screenActive = !screenActive;
             screenBadge.textContent = screenActive ? 'LIVE' : 'PAUSED';
             screenBadge.classList.toggle('paused', !screenActive);
             screenToggle.textContent = screenActive ? 'Pause' : 'Resume';
-            if (screenActive) {{
+            if (screenActive) {
                 scheduleScreen();
-            }} else {{
+            } else {
                 clearTimeout(screenTimer);
-            }}
-        }}
+            }
+        }
 
-        function sendControl(action) {{
+        function sendControl(action) {
             const now = Date.now();
             if (now - lastControlTime < CONTROL_THROTTLE_MS) return;
             lastControlTime = now;
-            fetch(`/api/control?action=${{encodeURIComponent(action)}}`, {{ method: 'POST' }}).catch(() => {{}});
-        }}
+            fetch(`/api/control?action=${encodeURIComponent(action)}`, { method: 'POST' }).catch(() => {});
+        }
 
         screenImg.onload = scheduleScreen;
         screenImg.onerror = scheduleScreen;
         scheduleScreen();
 
-        document.addEventListener('keydown', (e) => {{
+        document.addEventListener('keydown', (e) => {
             if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
             let action = null;
             if (e.key === 'ArrowUp') action = 'up';
@@ -862,40 +897,40 @@ fn render_index(state: &WifiStateHandle) -> String {
             if (e.key === 'Enter') action = 'select';
             if (e.key === 'Backspace' || e.key === 'Escape') action = 'back';
             if (e.key === 'r' || e.key === 'R') action = 'refresh';
-            if (action) {{
+            if (action) {
                 e.preventDefault();
                 sendControl(action);
-            }}
-        }});
+            }
+        });
 
-        async function loadFiles(path = '/') {{
+        async function loadFiles(path = '/') {
             currentPath = path;
             renderBreadcrumbs();
             fileList.innerHTML = '<div style="padding: 20px; text-align: center;">Loading...</div>';
             
-            try {{
-                const resp = await fetch(`/api/files?path=${{encodeURIComponent(path)}}`);
+            try {
+                const resp = await fetch(`/api/files?path=${encodeURIComponent(path)}`);
                 const files = await resp.json();
                 
                 fileList.innerHTML = '';
                 
-                if (path !== '/') {{
+                if (path !== '/') {
                     const parent = path.split('/').slice(0, -1).join('/') || '/';
-                    addFileItem({{ name: '..', is_dir: true, size: 0 }}, parent);
-                }}
+                    addFileItem({ name: '..', is_dir: true, size: 0 }, parent);
+                }
 
                 files.sort((a,b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name))
                      .forEach(f => addFileItem(f));
                 
-                if (files.length === 0 && path === '/') {{
+                if (files.length === 0 && path === '/') {
                     fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-dim);">No files found</div>';
-                }}
-            }} catch (err) {{
+                }
+            } catch (err) {
                 fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--danger);">Error loading files</div>';
-            }}
-        }}
+            }
+        }
 
-        function addFileItem(file, overridePath = null) {{
+        function addFileItem(file, overridePath = null) {
             const div = document.createElement('div');
             div.className = 'file-item';
             const lowerName = file.name.toLowerCase();
@@ -909,136 +944,132 @@ fn render_index(state: &WifiStateHandle) -> String {
                 : '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
 
             div.innerHTML = `
-                ${{icon}}
-                <div class="name">${{file.name}}</div>
-                <div class="size">${{file.is_dir ? '-' : formatBytes(file.size)}}</div>
+                ${icon}
+                <div class="name">${file.name}</div>
+                <div class="size">${file.is_dir ? '-' : formatBytes(file.size)}</div>
                 <div class="actions">
-                    ${{isLiveApp ? `<button class="btn-action" title="Run" onclick="launchApp('${{file.name}}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path><polygon points="10 8 16 12 10 16 10 8"></polygon></svg></button>` : ''}}
-                    ${{isBin ? `<button class="btn-action" title="Flash & Reboot" onclick="launchApp('${{file.name}}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 12-14h-7l1-6z"></path></svg></button>` : ''}}
-                    ${{!file.is_dir ? `<button class="btn-action" title="Download" onclick="downloadFile('${{file.name}}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"></path></svg></button>` : ''}}
-                    ${{file.name !== '..' ? `<button class="btn-del" title="Delete" onclick="deleteFile('${{file.name}}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></button>` : ''}}
+                    ${isLiveApp ? `<button class="btn-action" title="Run" onclick="launchApp('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path><polygon points="10 8 16 12 10 16 10 8"></polygon></svg></button>` : ''}
+                    ${isBin ? `<button class="btn-action" title="Flash & Reboot" onclick="launchApp('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 12-14h-7l1-6z"></path></svg></button>` : ''}
+                    ${!file.is_dir ? `<button class="btn-action" title="Download" onclick="downloadFile('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"></path></svg></button>` : ''}
+                    ${file.name !== '..' ? `<button class="btn-del" title="Delete" onclick="deleteFile('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></button>` : ''}
                 </div>
             `;
 
-            div.querySelector('.name').onclick = () => {{
-                if (file.is_dir) {{
+            div.querySelector('.name').onclick = () => {
+                if (file.is_dir) {
                     const newPath = overridePath || (currentPath === '/' ? '/' + file.name : currentPath + '/' + file.name);
                     loadFiles(newPath);
-                }}
-            }};
+                }
+            };
 
             fileList.appendChild(div);
-        }}
+        }
 
-        function renderBreadcrumbs() {{
+        function renderBreadcrumbs() {
             const parts = currentPath.split('/').filter(p => p);
             breadcrumb.innerHTML = '<span onclick="loadFiles(\'/\')">Root</span>';
             let path = '';
-            parts.forEach(p => {{
+            parts.forEach(p => {
                 path += '/' + p;
                 const linkPath = path;
-                breadcrumb.innerHTML += ` / <span onclick="loadFiles('${{linkPath}}')">${{p}}</span>`;
-            }});
-        }}
+                breadcrumb.innerHTML += ` / <span onclick="loadFiles('${linkPath}')">${p}</span>`;
+            });
+        }
 
-        function downloadFile(name) {{
+        function downloadFile(name) {
             const path = currentPath === '/' ? '/' + name : currentPath + '/' + name;
-            window.location.href = `/api/download?path=${{encodeURIComponent(path)}}`;
-        }}
+            window.location.href = `/api/download?path=${encodeURIComponent(path)}`;
+        }
 
-        async function launchApp(name) {{
+        async function launchApp(name) {
             const lowerName = name.toLowerCase();
             const isBin = lowerName.endsWith('.bin');
             const prompt = isBin
-                ? `Flash and reboot into ${{name}}?`
-                : `Run ${{name}} now?`;
+                ? `Flash and reboot into ${name}?`
+                : `Run ${name} now?`;
             if (!confirm(prompt)) return;
             const path = currentPath === '/' ? '/' + name : currentPath + '/' + name;
-            const resp = await fetch(`/api/launch?path=${{encodeURIComponent(path)}}`, {{ method: 'POST' }});
+            const resp = await fetch(`/api/launch?path=${encodeURIComponent(path)}`, { method: 'POST' });
             const text = await resp.text();
-            if (text.trim() !== 'OK') {{
+            if (text.trim() !== 'OK') {
                 alert(text || 'Launch failed');
-            }}
-        }}
+            }
+        }
 
-        async function mkdir() {{
+        async function mkdir() {
             const name = prompt('Folder name:');
             if (!name) return;
             const path = currentPath === '/' ? '/' + name : currentPath + '/' + name;
-            await fetch(`/api/mkdir?path=${{encodeURIComponent(path)}}`, {{ method: 'POST' }});
+            await fetch(`/api/mkdir?path=${encodeURIComponent(path)}`, { method: 'POST' });
             loadFiles(currentPath);
-        }}
+        }
 
-        async function deleteFile(name) {{
-            if (!confirm(`Delete ${{name}}?`)) return;
+        async function deleteFile(name) {
+            if (!confirm(`Delete ${name}?`)) return;
             const path = currentPath === '/' ? '/' + name : currentPath + '/' + name;
-            await fetch(`/api/delete?path=${{encodeURIComponent(path)}}`, {{ method: 'POST' }});
+            await fetch(`/api/delete?path=${encodeURIComponent(path)}`, { method: 'POST' });
             loadFiles(currentPath);
-        }}
+        }
 
-        function formatBytes(bytes) {{
+        function formatBytes(bytes) {
             if (bytes === 0) return '0 B';
             const k = 1024;
             const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-        }}
+        }
 
         // Upload Logic
         fileInput.onchange = (e) => uploadFiles(e.target.files);
         
-        dropZone.ondragover = (e) => {{ e.preventDefault(); dropZone.classList.add('dragover'); }};
+        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
         dropZone.ondragleave = () => dropZone.classList.remove('dragover');
-        dropZone.ondrop = (e) => {{ 
+        dropZone.ondrop = (e) => { 
             e.preventDefault(); 
             dropZone.classList.remove('dragover');
             uploadFiles(e.dataTransfer.files);
-        }};
+        };
 
-        async function uploadFiles(files) {{
+        async function uploadFiles(files) {
             if (!files.length) return;
             progressContainer.style.display = 'block';
             
-            for (let file of files) {{
-                await new Promise((resolve, reject) => {{
+            for (let file of files) {
+                await new Promise((resolve, reject) => {
                     const xhr = new XMLHttpRequest();
                     xhr.open('POST', '/upload');
                     xhr.setRequestHeader('X-Filename', file.name);
                     xhr.setRequestHeader('X-Path', currentPath);
                     
-                    xhr.upload.onprogress = (e) => {{
-                        if (e.lengthComputable) {{
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable) {
                             const percent = (e.loaded / e.total) * 100;
                             progressBar.style.width = percent + '%';
-                        }}
-                    }};
+                        }
+                    };
                     
                     xhr.onload = () => resolve();
                     xhr.onerror = () => reject();
                     xhr.send(file);
-                }});
-            }}
+                });
+            }
             
             progressBar.style.width = '0%';
             progressContainer.style.display = 'none';
             loadFiles(currentPath);
-        }}
+        }
 
-        async function rebootFactory() {{
+        async function rebootFactory() {
             if (!confirm('Reboot back to the main Factory OS?')) return;
-            await fetch('/api/reboot_factory', {{ method: 'POST' }});
+            await fetch('/api/reboot_factory', { method: 'POST' });
             setTimeout(() => location.reload(), 2000);
-        }}
+        }
 
         loadFiles();
     </script>
 </body>
 </html>
-"#,
-        ssid = ssid,
-        ip = ip
-    )
-}
+"#;
 
 fn parse_control_action(uri: &str) -> Option<MenuAction> {
     let query = uri.splitn(2, '?').nth(1)?;

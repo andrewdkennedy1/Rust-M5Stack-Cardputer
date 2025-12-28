@@ -23,7 +23,6 @@ use live_apps::{LiveAppOutcome, LiveAppRunner};
 use menu::{MenuAction, MenuItem, MenuState};
 use status::{BatteryGauge, StatusProvider};
 use ui::{render_menu, render_status, show_message_and_wait};
-use web::start_wifi_file_server;
 use storage::{mount_sd_card, SD_APPS_PATH, SD_ROOT};
 
 const UI_TICK_MS: u64 = 16;
@@ -107,7 +106,7 @@ pub fn boot() -> ! {
     let ota_ready = ota_partition_available();
 
     let (control_tx, control_rx) = std::sync::mpsc::channel();
-    let wifi_state = start_wifi_file_server(
+    let wifi_state = web::start_wifi_file_server(
         modem,
         if sd_ready {
             Some(PathBuf::from(SD_ROOT))

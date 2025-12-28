@@ -14,9 +14,24 @@ if [[ -z "${IDF_PATH:-}" ]]; then
   fi
 fi
 
+if [[ ! -f "${IDF_PATH}/export.sh" ]]; then
+  echo "ESP-IDF export script not found at ${IDF_PATH}/export.sh" >&2
+  exit 1
+fi
+
+if [[ -z "${IDF_EXPORT_QUIET:-}" ]]; then
+  export IDF_EXPORT_QUIET=1
+fi
+
 # shellcheck source=/dev/null
 . "${IDF_PATH}/export.sh"
 
 export ESP_IDF_TOOLS_INSTALL_DIR=fromenv
 
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo not found on PATH. Install Rust and try again." >&2
+  exit 1
+fi
+
+echo "Building loader (release)..."
 RUSTC_WRAPPER= cargo build --release --bin loader
