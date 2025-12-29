@@ -8,8 +8,10 @@ use crate::keyboard::{CardputerKeyboard, KeyEvent};
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
+use std::time::Duration;
+
 use super::app::AppContext;
-use super::menu::{display_name, menu_path_display, MenuState};
+use super::menu::{menu_path_display, MenuState};
 use super::status::StatusSnapshot;
 
 const LIST_TOP: i32 = 48;
@@ -42,7 +44,7 @@ pub fn render_menu(
 
     let path_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
     let path_text = menu_path_display(menu);
-    Text::new(&path_text, Point::new(2, 22), path_style)
+    Text::new(path_text, Point::new(2, 22), path_style)
         .draw(fbuf)
         .ok();
 
@@ -59,7 +61,7 @@ pub fn render_menu(
         "> ",
         "  ",
         "(empty)",
-        |item| display_name(item),
+        |entry| entry.label.as_str(),
     );
 
     let footer_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
@@ -106,7 +108,7 @@ pub fn draw_selectable_list<T, F>(
     to_line: F,
 )
 where
-    F: Fn(&T) -> String,
+    F: Fn(&T) -> &str,
 {
     let len = items.len();
     let max_visible = max_visible.min(len.max(1));
@@ -122,6 +124,8 @@ where
         start = 0;
     }
 
+    let prefix_width = (prefix_selected.len().max(prefix_unselected.len()) as i32) * 6;
+
     if len == 0 {
         let empty_style = MonoTextStyle::new(&FONT_6X10, normal_color);
         Text::new(empty_text, Point::new(left, top), empty_style)
@@ -134,8 +138,14 @@ where
             let color = if is_selected { selected_color } else { normal_color };
             let style = MonoTextStyle::new(&FONT_6X10, color);
             let prefix = if is_selected { prefix_selected } else { prefix_unselected };
-            let line = format!("{}{}", prefix, to_line(item));
-            Text::new(&line, Point::new(left, y), style).draw(target).ok();
+            Text::new(prefix, Point::new(left, y), style).draw(target).ok();
+            Text::new(
+                to_line(item),
+                Point::new(left + prefix_width, y),
+                style,
+            )
+            .draw(target)
+            .ok();
         }
     }
 }
@@ -230,5 +240,6 @@ fn wait_for_keypress(keyboard: &mut CardputerKeyboard<'static>) {
                 return;
             }
         }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }

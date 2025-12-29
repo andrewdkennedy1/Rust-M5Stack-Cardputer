@@ -202,7 +202,7 @@ fn select_stl_index(
             "> ",
             "  ",
             "No STL files found",
-            |entry| entry.name.clone(),
+            |entry| entry.name.as_str(),
         );
 
         Text::new(hint, Point::new(4, 128), text_style)

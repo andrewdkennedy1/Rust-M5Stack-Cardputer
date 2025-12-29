@@ -9,5 +9,6 @@
 #define MICROPY_GCREGS_SETJMP                   (1)
 #define MICROPY_PERSISTENT_CODE_LOAD            (1)
 #define MICROPY_PY_SYS                          (0)
+#define MICROPY_READER_POSIX                    (1)
 
 #define MICROPY_ERROR_REPORTING                 (MICROPY_ERROR_REPORTING_TERSE)

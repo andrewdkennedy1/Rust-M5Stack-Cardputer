@@ -61,6 +61,15 @@ If an application crashes, freezes, or refuses to return to the OS:
 - Or build standalone firmware and copy the resulting `.bin` to the SD card so the loader can flash it into an OTA slot.
 - Reuse the hardware helpers in `cardputer::hal`, `cardputer::display_driver`, `cardputer::keyboard`, and `cardputer::swapchain` to keep your apps lean.
 
+## Python runner (for `.py`/`.mpy`)
+Running Python apps uses a dedicated runner image to keep heap usage low.
+1. Build the runner image:
+   - Linux/macOS: `scripts/build_python_runner.sh`
+   - Windows: `scripts/build_python_runner.bat`
+2. Upload `dist/python_runner.bin` to `/sdcard/cardputer/python_runner.bin` (via the web UI upload).
+   - Legacy path `/sdcard/.cardputer/python_runner.bin` is also accepted.
+3. Launch `.py` or `.mpy` from the menu; it will reboot into the runner and return to the OS when the script exits.
+
 ## Credits
 - Based on the community efforts around the M5Stack Cardputer and `esp-idf-hal`.
 - Display driver powered by [`st7789`](https://github.com/almindor/st7789).

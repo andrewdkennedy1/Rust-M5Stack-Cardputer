@@ -16,7 +16,7 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-default = ["std", "embassy", "esp-idf-svc/native"]
+default = ["std", "embassy", "esp-idf-svc/native", "usb_msc"]
 
 pio = ["esp-idf-svc/pio"]
 std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
@@ -24,6 +24,7 @@ alloc = ["esp-idf-svc/alloc"]
 nightly = ["esp-idf-svc/nightly"]
 experimental = ["esp-idf-svc/experimental"]
 embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/embassy-time-driver"]
+usb_msc = []
 
 [dependencies]
 log = { version = "0.4", default-features = false }
@@ -48,6 +49,13 @@ serde_json = "1.0"
 embuild = "0.33"
 
 [package.metadata.esp-idf-sys]
-extra_components = [
-  { component_dirs = ["components/wasm3", "components/micropython_embed"] }
-]
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/usb_shim", "components/wasm3", "components/micropython_embed"]
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_tinyusb", version = "1.2" }
+bindings_header = "esp_tinyusb_bindings.h"
+
+[patch.crates-io]
+esp-idf-sys = { path = "third_party/esp-idf-sys" }

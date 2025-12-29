@@ -35,3 +35,5 @@ fi
 
 echo "Building loader (release)..."
 RUSTC_WRAPPER= cargo build --release --bin loader
+
+echo "Tip: run scripts/build_python_runner.sh to build python_runner.bin for .py/.mpy apps."

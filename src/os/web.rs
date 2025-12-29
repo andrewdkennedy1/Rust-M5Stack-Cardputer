@@ -1,7 +1,10 @@
 use std::fs::File;
 use std::io::{Read, Write as StdWrite};
 use std::path::PathBuf;
-use std::sync::{mpsc::Sender, Arc, Mutex};
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -16,7 +19,6 @@ use super::chainload;
 use super::control::RemoteCommand;
 use super::live_apps::LiveAppKind;
 use super::menu::MenuAction;
-use crate::swapchain::ScreenCaptureHandle;
 use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,37 @@ pub struct WifiState {
 
 pub type WifiStateHandle = Arc<Mutex<WifiState>>;
 
+#[derive(Debug)]
+enum WebCommand {
+    Pause(Sender<()>),
+    Resume(Sender<()>),
+}
+
+pub struct WebHandle {
+    state: WifiStateHandle,
+    command_tx: Sender<WebCommand>,
+}
+
+impl WebHandle {
+    pub fn wifi_state(&self) -> WifiStateHandle {
+        self.state.clone()
+    }
+
+    pub fn pause(&self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.command_tx.send(WebCommand::Pause(tx)).is_ok() {
+            let _ = rx.recv_timeout(Duration::from_millis(1000));
+        }
+    }
+
+    pub fn resume(&self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.command_tx.send(WebCommand::Resume(tx)).is_ok() {
+            let _ = rx.recv_timeout(Duration::from_millis(1000));
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct WifiConfig {
@@ -51,6 +84,10 @@ struct FileEntry {
     size: u64,
 }
 
+fn try_write_response<W: HttpWrite>(resp: &mut W, bytes: &[u8]) -> bool {
+    resp.write_all(bytes).is_ok()
+}
+
 /// Returns a placeholder wifi state for when WiFi is disabled.
 pub fn wifi_disabled_state() -> WifiStateHandle {
     Arc::new(Mutex::new(WifiState {
@@ -63,22 +100,28 @@ pub fn wifi_disabled_state() -> WifiStateHandle {
 pub fn start_wifi_file_server(
     modem: Modem,
     sd_root: Option<PathBuf>,
-    screen_capture: ScreenCaptureHandle,
     control_tx: Sender<RemoteCommand>,
-) -> WifiStateHandle {
+) -> WebHandle {
     let state = Arc::new(Mutex::new(WifiState {
         mode: WifiMode::Station,
         ssid: "Checking SD...".to_string(),
         ip: None,
     }));
 
-    const WIFI_THREAD_STACK_BYTES: usize = 16 * 1024;
+    const WIFI_THREAD_STACK_BYTES: usize = 8 * 1024;
+    let (command_tx, command_rx) = std::sync::mpsc::channel();
 
     let state_thread = state.clone();
     let spawn_result = thread::Builder::new()
         .stack_size(WIFI_THREAD_STACK_BYTES)
         .spawn(move || {
-            if let Err(err) = bringup_wifi_and_server(modem, sd_root, state_thread, screen_capture, control_tx) {
+            if let Err(err) = wifi_thread(
+                modem,
+                sd_root,
+                state_thread,
+                control_tx,
+                command_rx,
+            ) {
                 error!("WiFi file server failed: {:?}", err);
             }
         });
@@ -91,117 +134,210 @@ pub fn start_wifi_file_server(
         }
     }
 
-    state
+    WebHandle {
+        state,
+        command_tx,
+    }
 }
 
 type ServerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-fn bringup_wifi_and_server(
+struct WifiWorker {
+    wifi: BlockingWifi<EspWifi<'static>>,
+    server: Option<EspHttpServer<'static>>,
+    state: WifiStateHandle,
+    sd_root: Option<PathBuf>,
+    control_tx: Sender<RemoteCommand>,
+    paused: bool,
+}
+
+impl WifiWorker {
+    fn new(
+        modem: Modem,
+        sd_root: Option<PathBuf>,
+        state: WifiStateHandle,
+        control_tx: Sender<RemoteCommand>,
+    ) -> ServerResult<Self> {
+        let sysloop = EspSystemEventLoop::take()?;
+        let nvs = EspDefaultNvsPartition::take()?;
+        let mut wifi =
+            BlockingWifi::wrap(EspWifi::new(modem, sysloop.clone(), Some(nvs))?, sysloop)?;
+        let server = bringup_wifi_and_server(&mut wifi, &sd_root, &state, control_tx.clone());
+        Ok(Self {
+            wifi,
+            server,
+            state,
+            sd_root,
+            control_tx,
+            paused: false,
+        })
+    }
+
+    fn pause(&mut self) {
+        if !self.paused {
+            self.server = None;
+            let _ = self.wifi.disconnect();
+            let _ = self.wifi.stop();
+            update_wifi_state(&self.state, "paused", None);
+            self.paused = true;
+        }
+    }
+
+    fn resume(&mut self) {
+        if self.paused {
+            self.server = bringup_wifi_and_server(
+                &mut self.wifi,
+                &self.sd_root,
+                &self.state,
+                self.control_tx.clone(),
+            );
+            self.paused = false;
+        }
+    }
+}
+
+fn wifi_thread(
     modem: Modem,
     sd_root: Option<PathBuf>,
     state: WifiStateHandle,
-    screen_capture: ScreenCaptureHandle,
     control_tx: Sender<RemoteCommand>,
+    command_rx: Receiver<WebCommand>,
 ) -> ServerResult<()> {
-    let sysloop = EspSystemEventLoop::take()?;
-    let nvs = EspDefaultNvsPartition::take()?;
+    let mut worker = WifiWorker::new(modem, sd_root, state, control_tx)?;
 
-    let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, sysloop.clone(), Some(nvs))?, sysloop)?;
-
-    let mut ssid = String::new();
-    let mut password = String::new();
-    let mut auto_connect = true;
-
-    if let Some(ref root) = sd_root {
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                if let Ok(name) = entry.file_name().into_string() {
-                    let name_upper = name.to_uppercase();
-                    // Match "wifi.conf", "WIFI.CONF", or "WIFI~1.CON" (8.3 alias)
-                    if name_upper == "WIFI.CONF" || name_upper == "WIFI~1.CON" || name_upper == "WIFI.CON" {
-                        let path = entry.path();
-                        info!("Found WiFi config at: {:?}", path);
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(config) = serde_json::from_str::<WifiConfig>(&content) {
-                                ssid = config.ssid;
-                                password = config.password;
-                                auto_connect = config.auto_connect;
-                                break;
-                            } else {
-                                error!("Failed to parse JSON in {:?}", path);
-                            }
-                        }
-                    }
-                }
+    loop {
+        match command_rx.recv() {
+            Ok(WebCommand::Pause(reply)) => {
+                worker.pause();
+                let _ = reply.send(());
             }
-        }
-
-        if ssid.is_empty() {
-            error!("WiFi config (wifi.conf) not found in {:?}", root);
-            // List files to help debug if it still fails
-            if let Ok(entries) = std::fs::read_dir(root) {
-                info!("Files on SD:");
-                for entry in entries.flatten() {
-                    if let Ok(name) = entry.file_name().into_string() {
-                        info!("  - {}", name);
-                    }
-                }
+            Ok(WebCommand::Resume(reply)) => {
+                worker.resume();
+                let _ = reply.send(());
             }
+            Err(_) => break,
         }
     }
 
-    if ssid.is_empty() {
-        error!("No WiFi credentials found on SD card (wifi.conf)");
-        let mut guard = state.lock().unwrap();
-        guard.ssid = "No config".to_string();
-        return Ok(());
-    }
+    Ok(())
+}
 
-    if !auto_connect {
+fn bringup_wifi_and_server(
+    wifi: &mut BlockingWifi<EspWifi<'static>>,
+    sd_root: &Option<PathBuf>,
+    state: &WifiStateHandle,
+    control_tx: Sender<RemoteCommand>,
+) -> Option<EspHttpServer<'static>> {
+    let config = match load_wifi_config(sd_root) {
+        Some(config) => config,
+        None => {
+            if sd_root.is_some() {
+                update_wifi_state(state, "No config", None);
+            } else {
+                update_wifi_state(state, "SD not mounted", None);
+            }
+            return None;
+        }
+    };
+
+    if !config.auto_connect {
         info!("WiFi autoConnect is false, skipping connection");
-        let mut guard = state.lock().unwrap();
-        guard.ssid = format!("{} (manual)", ssid);
-        return Ok(());
+        update_wifi_state(state, &format!("{} (manual)", config.ssid), None);
+        return None;
     }
 
-    {
-        let mut guard = state.lock().unwrap();
-        guard.ssid = ssid.clone();
-    }
+    update_wifi_state(state, &config.ssid, None);
 
     let client_cfg = ClientConfiguration {
-        ssid: ssid.as_str().try_into().unwrap(),
-        password: password.as_str().try_into().unwrap(),
+        ssid: config.ssid.as_str().try_into().unwrap(),
+        password: config.password.as_str().try_into().unwrap(),
         ..Default::default()
     };
 
-    wifi.set_configuration(&Configuration::Client(client_cfg))?;
-    wifi.start()?;
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
+    if wifi
+        .set_configuration(&Configuration::Client(client_cfg))
+        .and_then(|_| wifi.start())
+        .and_then(|_| wifi.connect())
+        .and_then(|_| wifi.wait_netif_up())
+        .is_err()
+    {
+        error!("WiFi connect failed");
+        let _ = wifi.disconnect();
+        let _ = wifi.stop();
+        update_wifi_state(state, "error", None);
+        return None;
+    }
 
     if let Ok(ip_info) = wifi.wifi().sta_netif().get_ip_info() {
-        let mut guard = state.lock().unwrap();
-        guard.ip = Some(ip_info.ip.to_string());
+        update_wifi_state(state, &config.ssid, Some(ip_info.ip.to_string()));
     }
 
-    info!("WiFi connected to {}", ssid);
+    info!("WiFi connected to {}", config.ssid);
 
-    let _server = launch_http(sd_root, state.clone(), screen_capture, control_tx)?;
-
-    loop {
-        thread::sleep(Duration::from_secs(60));
+    match launch_http(
+        sd_root.clone(),
+        state.clone(),
+        control_tx,
+    ) {
+        Ok(server) => Some(server),
+        Err(err) => {
+            error!("HTTP server failed: {:?}", err);
+            update_wifi_state(state, "error", None);
+            None
+        }
     }
+}
+
+fn update_wifi_state(state: &WifiStateHandle, ssid: &str, ip: Option<String>) {
+    if let Ok(mut guard) = state.lock() {
+        guard.ssid = ssid.to_string();
+        guard.ip = ip;
+    }
+}
+
+fn load_wifi_config(sd_root: &Option<PathBuf>) -> Option<WifiConfig> {
+    let root = sd_root.as_ref()?;
+    let entries = std::fs::read_dir(root).ok()?;
+
+    for entry in entries.flatten() {
+        if let Ok(name) = entry.file_name().into_string() {
+            let name_upper = name.to_uppercase();
+            // Match "wifi.conf", "WIFI.CONF", or "WIFI~1.CON" (8.3 alias)
+            if name_upper == "WIFI.CONF" || name_upper == "WIFI~1.CON" || name_upper == "WIFI.CON" {
+                let path = entry.path();
+                info!("Found WiFi config at: {:?}", path);
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(config) = serde_json::from_str::<WifiConfig>(&content) {
+                        return Some(config);
+                    } else {
+                        error!("Failed to parse JSON in {:?}", path);
+                    }
+                }
+            }
+        }
+    }
+
+    error!("WiFi config (wifi.conf) not found in {:?}", root);
+    if let Ok(entries) = std::fs::read_dir(root) {
+        info!("Files on SD:");
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                info!("  - {}", name);
+            }
+        }
+    }
+
+    None
 }
 
 fn launch_http(
     sd_root: Option<PathBuf>,
     state: WifiStateHandle,
-    screen_capture: ScreenCaptureHandle,
     control_tx: Sender<RemoteCommand>,
 ) -> ServerResult<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&HttpConfig {
-        http_port: 8080,
+        http_port: 80,
+        stack_size: 10 * 1024,
         ..Default::default()
     })?;
 
@@ -220,37 +356,22 @@ fn launch_http(
         };
         
         // Stream HTML from const parts (in Flash) - no heap allocation for the large parts
-        resp.write_all(INDEX_HTML_PART1).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(ssid.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(INDEX_HTML_PART2).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(ip.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(INDEX_HTML_PART3).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        
-        Ok::<(), Box<dyn std::error::Error>>(())
-    })?;
-
-    let screen_capture = screen_capture.clone();
-    server.fn_handler("/api/screen", Method::Get, move |req| {
-        let mut resp = req
-            .into_response(
-                200,
-                Some("OK"),
-                &[("Content-Type", "image/bmp"), ("Cache-Control", "no-store")],
-            )
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-
-        let (width, height, pixels) = if let Ok(guard) = screen_capture.lock() {
-            let (width, height) = guard.dimensions();
-            (width, height, guard.pixels().to_vec())
-        } else {
-            (0, 0, Vec::new())
-        };
-
-        if width > 0 && height > 0 {
-            let bmp = build_screen_bmp(width, height, &pixels);
-            resp.write_all(&bmp).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        if !try_write_response(&mut resp, INDEX_HTML_PART1) {
+            return Ok(());
         }
-
+        if !try_write_response(&mut resp, ssid.as_bytes()) {
+            return Ok(());
+        }
+        if !try_write_response(&mut resp, INDEX_HTML_PART2) {
+            return Ok(());
+        }
+        if !try_write_response(&mut resp, ip.as_bytes()) {
+            return Ok(());
+        }
+        if !try_write_response(&mut resp, INDEX_HTML_PART3) {
+            return Ok(());
+        }
+        
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
@@ -261,9 +382,13 @@ fn launch_http(
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if let Some(action) = parse_control_action(&uri) {
             let _ = control_tx.send(RemoteCommand::Menu(action));
-            resp.write_all(b"OK").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, b"OK") {
+                return Ok(());
+            }
         } else {
-            resp.write_all(b"Invalid action").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, b"Invalid action") {
+                return Ok(());
+            }
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
@@ -291,16 +416,21 @@ fn launch_http(
                         };
                         if let Some(command) = command {
                             let _ = launch_tx.send(command);
-                            resp.write_all(b"OK")
-                                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                            if !try_write_response(&mut resp, b"OK") {
+                                return Ok(());
+                            }
                             return Ok::<(), Box<dyn std::error::Error>>(());
                         }
                     }
                 }
             }
-            resp.write_all(b"Invalid app").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, b"Invalid app") {
+                return Ok(());
+            }
         } else {
-            resp.write_all(b"SD card not mounted").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, b"SD card not mounted") {
+                return Ok(());
+            }
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
@@ -328,7 +458,9 @@ fn launch_http(
 
             // Safety check: ensure target is within root
             if !target.starts_with(root) {
-                 resp.write_all(b"[]").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                 if !try_write_response(&mut resp, b"[]") {
+                     return Ok(());
+                 }
                  return Ok(());
             }
 
@@ -345,9 +477,13 @@ fn launch_http(
                 }
             }
             let json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string());
-            resp.write_all(json.as_bytes()).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, json.as_bytes()) {
+                return Ok(());
+            }
         } else {
-            resp.write_all(b"[]").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if !try_write_response(&mut resp, b"[]") {
+                return Ok(());
+            }
         }
 
         Ok::<(), Box<dyn std::error::Error>>(())
@@ -365,10 +501,14 @@ fn launch_http(
                 if target.starts_with(root) && target != *root {
                     if target.is_file() {
                         let _ = std::fs::remove_file(target);
-                        resp.write_all(b"Deleted").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                        if !try_write_response(&mut resp, b"Deleted") {
+                            return Ok(());
+                        }
                     } else if target.is_dir() {
                         let _ = std::fs::remove_dir_all(target);
-                        resp.write_all(b"Deleted Directory").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                        if !try_write_response(&mut resp, b"Deleted Directory") {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -387,18 +527,22 @@ fn launch_http(
                 if target.starts_with(root) && target.is_file() {
                     let mut file = File::open(&target).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                     let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                    let mut buf = [0u8; 4096];
+                    let mut buf = vec![0u8; 1024];
                     loop {
                         let n = file.read(&mut buf).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                         if n == 0 { break; }
-                        resp.write_all(&buf[..n]).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                        if !try_write_response(&mut resp, &buf[..n]) {
+                            return Ok(());
+                        }
                     }
                     return Ok::<(), Box<dyn std::error::Error>>(());
                 }
             }
         }
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(b"Not found").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        if !try_write_response(&mut resp, b"Not found") {
+            return Ok(());
+        }
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
@@ -413,7 +557,9 @@ fn launch_http(
                 let target = root.join(subpath.trim_start_matches('/'));
                 if target.starts_with(root) {
                     let _ = std::fs::create_dir_all(target);
-                    resp.write_all(b"Created").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                    if !try_write_response(&mut resp, b"Created") {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -422,7 +568,7 @@ fn launch_http(
 
     server.fn_handler("/api/reboot_factory", Method::Post, move |req| -> Result<(), Box<dyn std::error::Error>> {
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(b"Rebooting to Factory OS...").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let _ = try_write_response(&mut resp, b"Rebooting to Factory OS...");
         chainload::reboot_to_factory()
     })?;
 
@@ -432,7 +578,7 @@ fn launch_http(
         // ... (existing upload logic, updated for path support)
         if upload_root.is_none() {
             let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-            resp.write_all(b"SD card not mounted").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let _ = try_write_response(&mut resp, b"SD card not mounted");
             return Ok(());
         }
 
@@ -445,7 +591,7 @@ fn launch_http(
 
         if !target.starts_with(upload_root.as_ref().unwrap()) {
              let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-             resp.write_all(b"Invalid target").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+             let _ = try_write_response(&mut resp, b"Invalid target");
              return Ok(());
         }
 
@@ -463,7 +609,7 @@ fn launch_http(
         }
 
         let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        resp.write_all(b"OK").map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let _ = try_write_response(&mut resp, b"OK");
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
@@ -544,7 +690,7 @@ const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
 
         .dashboard {
             display: grid;
-            grid-template-columns: 1.2fr 0.8fr;
+            grid-template-columns: 1fr;
             gap: 20px;
             margin-bottom: 2rem;
         }
@@ -558,8 +704,6 @@ const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
             animation: riseIn 0.7s ease both;
         }
 
-        .dashboard .panel:nth-child(2) { animation-delay: 0.08s; }
-
         .panel-header {
             display: flex;
             justify-content: space-between;
@@ -569,68 +713,6 @@ const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
 
         .panel-header h2 { font-size: 0.9rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
         .panel-sub { font-size: 0.75rem; color: var(--text-dim); }
-
-        .screen-frame {
-            position: relative;
-            background: rgba(255, 255, 255, 0.6);
-            border-radius: 16px;
-            padding: 12px;
-            border: 1px solid var(--glass-border);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #screenImg {
-            width: 100%;
-            max-width: 420px;
-            aspect-ratio: 240 / 135;
-            image-rendering: pixelated;
-            border-radius: 10px;
-            border: 1px solid rgba(0,0,0,0.08);
-            background: #111418;
-        }
-
-        .screen-badge {
-            position: absolute;
-            top: 10px;
-            left: 12px;
-            font-size: 0.65rem;
-            letter-spacing: 0.08em;
-            padding: 4px 8px;
-            border-radius: 999px;
-            background: rgba(42, 127, 122, 0.2);
-            border: 1px solid rgba(42, 127, 122, 0.45);
-        }
-
-        .screen-badge.paused {
-            background: rgba(97, 101, 108, 0.16);
-            border-color: rgba(97, 101, 108, 0.32);
-        }
-
-        .screen-meta {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 0.75rem;
-            font-size: 0.8rem;
-            color: var(--text-dim);
-        }
-
-        .btn-soft {
-            background: rgba(255, 255, 255, 0.8);
-            border: 1px solid var(--glass-border);
-            color: var(--text-main);
-            padding: 6px 12px;
-            border-radius: 10px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-        .btn-soft:hover {
-            background: rgba(255, 255, 255, 0.96);
-        }
 
         .control-pad {
             display: grid;
@@ -786,20 +868,6 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
         </header>
 
         <div class="dashboard">
-            <div class="panel screen-panel">
-                <div class="panel-header">
-                    <h2>Live Screen</h2>
-                    <span class="panel-sub">Framebuffer mirror</span>
-                </div>
-                <div class="screen-frame">
-                    <img id="screenImg" alt="Cardputer screen" src="" width="240" height="135">
-                    <div class="screen-badge" id="screenBadge">LIVE</div>
-                </div>
-                <div class="screen-meta">
-                    <span>240x135</span>
-                    <button class="btn-soft" onclick="toggleScreen()" id="screenToggle">Pause</button>
-                </div>
-            </div>
             <div class="panel controls-panel">
                 <div class="panel-header">
                     <h2>Remote Control</h2>
@@ -850,33 +918,8 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
         const fileInput = document.getElementById('fileInput');
         const progressBar = document.getElementById('progressBar');
         const progressContainer = document.getElementById('progressContainer');
-        const screenImg = document.getElementById('screenImg');
-        const screenBadge = document.getElementById('screenBadge');
-        const screenToggle = document.getElementById('screenToggle');
-        let screenActive = true;
-        let screenTimer = null;
         let lastControlTime = 0;
         const CONTROL_THROTTLE_MS = 80;
-
-        function scheduleScreen() {
-            if (!screenActive) return;
-            clearTimeout(screenTimer);
-            screenTimer = setTimeout(() => {
-                screenImg.src = `/api/screen?ts=${Date.now()}`;
-            }, 200);
-        }
-
-        function toggleScreen() {
-            screenActive = !screenActive;
-            screenBadge.textContent = screenActive ? 'LIVE' : 'PAUSED';
-            screenBadge.classList.toggle('paused', !screenActive);
-            screenToggle.textContent = screenActive ? 'Pause' : 'Resume';
-            if (screenActive) {
-                scheduleScreen();
-            } else {
-                clearTimeout(screenTimer);
-            }
-        }
 
         function sendControl(action) {
             const now = Date.now();
@@ -884,10 +927,6 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
             lastControlTime = now;
             fetch(`/api/control?action=${encodeURIComponent(action)}`, { method: 'POST' }).catch(() => {});
         }
-
-        screenImg.onload = scheduleScreen;
-        screenImg.onerror = scheduleScreen;
-        scheduleScreen();
 
         document.addEventListener('keydown', (e) => {
             if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
@@ -1089,51 +1128,4 @@ fn parse_control_action(uri: &str) -> Option<MenuAction> {
         }
     }
     None
-}
-
-fn build_screen_bmp(width: usize, height: usize, pixels: &[u16]) -> Vec<u8> {
-    let row_stride = ((width * 3 + 3) / 4) * 4;
-    let image_size = row_stride * height;
-    let file_size = 54 + image_size;
-
-    let mut data = Vec::with_capacity(file_size);
-    data.extend_from_slice(b"BM");
-    data.extend_from_slice(&(file_size as u32).to_le_bytes());
-    data.extend_from_slice(&0u16.to_le_bytes());
-    data.extend_from_slice(&0u16.to_le_bytes());
-    data.extend_from_slice(&54u32.to_le_bytes());
-
-    data.extend_from_slice(&40u32.to_le_bytes());
-    data.extend_from_slice(&(width as i32).to_le_bytes());
-    data.extend_from_slice(&(height as i32).to_le_bytes());
-    data.extend_from_slice(&1u16.to_le_bytes());
-    data.extend_from_slice(&24u16.to_le_bytes());
-    data.extend_from_slice(&0u32.to_le_bytes());
-    data.extend_from_slice(&(image_size as u32).to_le_bytes());
-    data.extend_from_slice(&0i32.to_le_bytes());
-    data.extend_from_slice(&0i32.to_le_bytes());
-    data.extend_from_slice(&0u32.to_le_bytes());
-    data.extend_from_slice(&0u32.to_le_bytes());
-
-    let padding = row_stride - width * 3;
-    for y in (0..height).rev() {
-        let row_start = y * width;
-        for x in 0..width {
-            let pixel = pixels.get(row_start + x).copied().unwrap_or(0);
-            let r = ((pixel >> 11) & 0x1f) as u8;
-            let g = ((pixel >> 5) & 0x3f) as u8;
-            let b = (pixel & 0x1f) as u8;
-            let r8 = (r << 3) | (r >> 2);
-            let g8 = (g << 2) | (g >> 4);
-            let b8 = (b << 3) | (b >> 2);
-            data.push(b8);
-            data.push(g8);
-            data.push(r8);
-        }
-        for _ in 0..padding {
-            data.push(0);
-        }
-    }
-
-    data
 }

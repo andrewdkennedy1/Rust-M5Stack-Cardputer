@@ -23,6 +23,85 @@ static mp_obj_t g_render = MP_OBJ_NULL;
 static mp_obj_t g_should_exit = MP_OBJ_NULL;
 static char g_last_error[128] = {0};
 
+static const size_t DEFAULT_PY_HEAP_BYTES = 64 * 1024;
+static const size_t MIN_PY_HEAP_BYTES = 16 * 1024;
+static const size_t PY_HEAP_RESERVE_INTERNAL_BYTES = 32 * 1024;
+static const size_t PY_HEAP_RESERVE_SPIRAM_BYTES = 32 * 1024;
+
+static size_t clamp_heap_size(size_t requested, size_t largest, size_t reserve) {
+    if (largest == 0) {
+        return 0;
+    }
+    size_t target = requested ? requested : DEFAULT_PY_HEAP_BYTES;
+    if (target > largest) {
+        target = largest;
+    }
+    if (largest > reserve && target > largest - reserve) {
+        target = largest - reserve;
+    }
+    if (target < MIN_PY_HEAP_BYTES) {
+        target = largest < MIN_PY_HEAP_BYTES ? largest : MIN_PY_HEAP_BYTES;
+    }
+    return target;
+}
+
+static uint8_t *alloc_with_fallback(
+    size_t target,
+    size_t min_target,
+    uint32_t caps,
+    size_t *out_size,
+    int *out_spiram
+) {
+    size_t size = target;
+    while (size >= min_target && size > 0) {
+        uint8_t *heap = (uint8_t *)heap_caps_malloc(size, caps);
+        if (heap) {
+            *out_size = size;
+            *out_spiram = (caps & MALLOC_CAP_SPIRAM) != 0;
+            return heap;
+        }
+        if (size <= (8 * 1024)) {
+            break;
+        }
+        size -= 8 * 1024;
+    }
+    return NULL;
+}
+
+static uint8_t *alloc_python_heap(size_t requested, size_t *out_size, int *out_spiram) {
+    size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t target = clamp_heap_size(requested, largest_spiram, PY_HEAP_RESERVE_SPIRAM_BYTES);
+    if (target > 0) {
+        size_t min_target = target < MIN_PY_HEAP_BYTES ? target : MIN_PY_HEAP_BYTES;
+        uint8_t *heap = alloc_with_fallback(
+            target,
+            min_target,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
+            out_size,
+            out_spiram);
+        if (heap) {
+            return heap;
+        }
+    }
+
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    target = clamp_heap_size(requested, largest_internal, PY_HEAP_RESERVE_INTERNAL_BYTES);
+    if (target > 0) {
+        size_t min_target = target < MIN_PY_HEAP_BYTES ? target : MIN_PY_HEAP_BYTES;
+        uint8_t *heap = alloc_with_fallback(
+            target,
+            min_target,
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT,
+            out_size,
+            out_spiram);
+        if (heap) {
+            return heap;
+        }
+    }
+
+    return NULL;
+}
+
 static void set_error(const char *message) {
     if (!message) {
         g_last_error[0] = '\0';
@@ -39,11 +118,7 @@ const char *cardputer_mpy_last_error(void) {
 static void cardputer_mpy_cleanup(int clear_error) {
     if (g_heap) {
         mp_embed_deinit();
-        if (g_heap_spiram) {
-            heap_caps_free(g_heap);
-        } else {
-            free(g_heap);
-        }
+        heap_caps_free(g_heap);
     }
     g_heap = NULL;
     g_heap_spiram = 0;
@@ -112,6 +187,34 @@ static int exec_source(const char *source, size_t len) {
     }
 }
 
+static int exec_source_path(const char *path) {
+#if MICROPY_HAS_FILE_READER
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        qstr source_name = qstr_from_str(path);
+        mp_lexer_t *lex = mp_lexer_new_from_file(source_name);
+        mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+        mp_obj_t module_fun = mp_compile(&parse_tree, source_name, true);
+        mp_call_function_0(module_fun);
+        nlr_pop();
+        return 0;
+    } else {
+        mp_obj_print_exception(&mp_plat_print, (mp_obj_t)nlr.ret_val);
+        set_error("python exception");
+        return -1;
+    }
+#else
+    size_t source_len = 0;
+    char *source = read_file(path, &source_len);
+    if (!source) {
+        return -1;
+    }
+    int result = exec_source(source, source_len);
+    free(source);
+    return result;
+#endif
+}
+
 static int exec_mpy(const uint8_t *mpy, size_t len) {
     nlr_buf_t nlr;
     if (nlr_push(&nlr) == 0) {
@@ -120,6 +223,36 @@ static int exec_mpy(const uint8_t *mpy, size_t len) {
         mp_compiled_module_t cm = {0};
         cm.context = ctx;
         mp_raw_code_load_mem(mpy, len, &cm);
+        mp_obj_t f = mp_make_function_from_proto_fun(cm.rc, ctx, MP_OBJ_NULL);
+        mp_call_function_0(f);
+        nlr_pop();
+        return 0;
+    } else {
+        mp_obj_print_exception(&mp_plat_print, (mp_obj_t)nlr.ret_val);
+        set_error("python exception");
+        return -1;
+    }
+}
+
+static int exec_mpy_path(const char *path) {
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        mp_module_context_t *ctx = m_new_obj(mp_module_context_t);
+        ctx->module.globals = mp_globals_get();
+        mp_compiled_module_t cm = {0};
+        cm.context = ctx;
+#if MICROPY_HAS_FILE_READER
+        mp_raw_code_load_file(qstr_from_str(path), &cm);
+#else
+        size_t source_len = 0;
+        char *source = read_file(path, &source_len);
+        if (!source) {
+            nlr_pop();
+            return -1;
+        }
+        mp_raw_code_load_mem((const uint8_t *)source, source_len, &cm);
+        free(source);
+#endif
         mp_obj_t f = mp_make_function_from_proto_fun(cm.rc, ctx, MP_OBJ_NULL);
         mp_call_function_0(f);
         nlr_pop();
@@ -149,35 +282,30 @@ static mp_obj_t get_global(const char *name, int required) {
 int cardputer_mpy_start(const char *path, size_t heap_size) {
     cardputer_mpy_stop();
 
-    if (heap_size == 0) {
-        heap_size = 512 * 1024;
-    }
-
-    g_heap = (uint8_t *)heap_caps_malloc(heap_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t actual_heap_size = 0;
+    g_heap = alloc_python_heap(heap_size, &actual_heap_size, &g_heap_spiram);
     if (!g_heap) {
-        g_heap = (uint8_t *)malloc(heap_size);
-        g_heap_spiram = 0;
-    } else {
-        g_heap_spiram = 1;
-    }
-    if (!g_heap) {
-        set_error("heap alloc failed");
+        size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        char msg[128];
+        snprintf(
+            msg,
+            sizeof(msg),
+            "heap alloc failed (req=%u, int=%u, sp=%u)",
+            (unsigned)heap_size,
+            (unsigned)largest_internal,
+            (unsigned)largest_spiram
+        );
+        set_error(msg);
         return -1;
     }
+    heap_size = actual_heap_size;
     int stack_top;
     mp_stack_ctrl_init();
     mp_stack_set_limit(16 * 1024);
     mp_embed_init(g_heap, heap_size, &stack_top);
 
-    size_t source_len = 0;
-    char *source = read_file(path, &source_len);
-    if (!source) {
-        cardputer_mpy_cleanup(0);
-        return -1;
-    }
-
-    int exec_result = exec_source(source, source_len);
-    free(source);
+    int exec_result = exec_source_path(path);
     if (exec_result != 0) {
         cardputer_mpy_cleanup(0);
         return -1;
@@ -199,35 +327,30 @@ int cardputer_mpy_start(const char *path, size_t heap_size) {
 int cardputer_mpy_start_mpy(const char *path, size_t heap_size) {
     cardputer_mpy_stop();
 
-    if (heap_size == 0) {
-        heap_size = 512 * 1024;
-    }
-
-    g_heap = (uint8_t *)heap_caps_malloc(heap_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t actual_heap_size = 0;
+    g_heap = alloc_python_heap(heap_size, &actual_heap_size, &g_heap_spiram);
     if (!g_heap) {
-        g_heap = (uint8_t *)malloc(heap_size);
-        g_heap_spiram = 0;
-    } else {
-        g_heap_spiram = 1;
-    }
-    if (!g_heap) {
-        set_error("heap alloc failed");
+        size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        char msg[128];
+        snprintf(
+            msg,
+            sizeof(msg),
+            "heap alloc failed (req=%u, int=%u, sp=%u)",
+            (unsigned)heap_size,
+            (unsigned)largest_internal,
+            (unsigned)largest_spiram
+        );
+        set_error(msg);
         return -1;
     }
+    heap_size = actual_heap_size;
     int stack_top;
     mp_stack_ctrl_init();
     mp_stack_set_limit(16 * 1024);
     mp_embed_init(g_heap, heap_size, &stack_top);
 
-    size_t source_len = 0;
-    char *source = read_file(path, &source_len);
-    if (!source) {
-        cardputer_mpy_cleanup(0);
-        return -1;
-    }
-
-    int exec_result = exec_mpy((const uint8_t *)source, source_len);
-    free(source);
+    int exec_result = exec_mpy_path(path);
     if (exec_result != 0) {
         cardputer_mpy_cleanup(0);
         return -1;

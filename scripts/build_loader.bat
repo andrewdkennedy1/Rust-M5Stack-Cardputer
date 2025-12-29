@@ -19,3 +19,4 @@ set "ESP_IDF_TOOLS_INSTALL_DIR=fromenv"
 set "RUSTC_WRAPPER="
 
 cargo build --release --bin loader
+echo Tip: run scripts\build_python_runner.bat to build python_runner.bin for .py/.mpy apps.

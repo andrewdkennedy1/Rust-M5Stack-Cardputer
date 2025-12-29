@@ -9,7 +9,8 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use super::{tick_interval, LiveAppError, LiveAppOutcome};
 
-const DEFAULT_PY_HEAP_BYTES: usize = 512 * 1024;
+// 0 lets the runtime auto-size the heap based on free memory.
+const DEFAULT_PY_HEAP_BYTES: usize = 0;
 
 extern "C" {
     fn cardputer_mpy_start(path: *const c_char, heap_size: usize) -> i32;

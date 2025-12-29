@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use core::fmt::Write;
+
 use esp_idf_svc::systime::EspSystemTime;
 
 use super::web::{WifiMode, WifiStateHandle};
@@ -15,66 +17,77 @@ pub struct StatusProvider {
     wifi: WifiStateHandle,
     battery: BatteryGauge,
     started_at: Instant,
+    last_update: Instant,
+    snapshot: StatusSnapshot,
 }
 
 impl StatusProvider {
     pub fn new(wifi: WifiStateHandle, battery: BatteryGauge) -> Self {
-        Self {
+        let mut provider = Self {
             wifi,
             battery,
             started_at: Instant::now(),
-        }
+            last_update: Instant::now(),
+            snapshot: StatusSnapshot::default(),
+        };
+        provider.refresh_snapshot();
+        provider
     }
 
-    pub fn snapshot(&self) -> StatusSnapshot {
-        StatusSnapshot {
-            clock_text: self.clock_text(),
-            wifi_text: self.wifi_text(),
-            battery_text: self.battery_text(),
+    pub fn snapshot(&mut self) -> &StatusSnapshot {
+        if self.last_update.elapsed() >= Duration::from_millis(500) {
+            self.refresh_snapshot();
+            self.last_update = Instant::now();
         }
+        &self.snapshot
     }
 
-    fn clock_text(&self) -> String {
+    fn refresh_snapshot(&mut self) {
+        self.snapshot.clock_text.clear();
         let duration = EspSystemTime.now();
         if duration.as_secs() == 0 {
-            format_hms(self.started_at.elapsed())
+            write_hms(&mut self.snapshot.clock_text, self.started_at.elapsed());
         } else {
-            format_hms(duration)
+            write_hms(&mut self.snapshot.clock_text, duration);
         }
-    }
-
-    fn wifi_text(&self) -> String {
-        let state = self.wifi.lock().ok();
-        if let Some(state) = state.as_deref() {
+        self.snapshot.wifi_text.clear();
+        if let Ok(state) = self.wifi.lock() {
             match state.mode {
                 WifiMode::AccessPoint => {
-                    let ip = state.ip.clone().unwrap_or_else(|| "...".to_string());
-                    format!("AP {} @ {}", state.ssid, ip)
+                    if let Some(ip) = state.ip.as_deref() {
+                        let _ = write!(self.snapshot.wifi_text, "AP {} @ {}", state.ssid, ip);
+                    } else {
+                        let _ = write!(self.snapshot.wifi_text, "AP {}", state.ssid);
+                    }
                 }
                 WifiMode::Station => {
-                    let ip = state.ip.clone().unwrap_or_else(|| "...".to_string());
-                    format!("WiFi {} @ {}", state.ssid, ip)
+                    if let Some(ip) = state.ip.as_deref() {
+                        let _ = write!(self.snapshot.wifi_text, "WiFi {} @ {}", state.ssid, ip);
+                    } else {
+                        let _ = write!(self.snapshot.wifi_text, "WiFi {}", state.ssid);
+                    }
                 }
             }
         } else {
-            "WiFi offline".to_string()
+            self.snapshot.wifi_text.push_str("WiFi offline");
         }
-    }
 
-    fn battery_text(&self) -> String {
+        self.snapshot.battery_text.clear();
         match self.battery.percent() {
-            Some(pct) => format!("Batt {}%", pct),
-            None => "Batt --%".to_string(),
+            Some(pct) => {
+                let _ = write!(self.snapshot.battery_text, "Batt {}%", pct);
+            }
+            None => self.snapshot.battery_text.push_str("Batt --%"),
         }
     }
 }
 
-fn format_hms(duration: Duration) -> String {
+fn write_hms(out: &mut String, duration: Duration) {
     let total_seconds = duration.as_secs() % 86_400;
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
-    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    let _ = write!(out, "{:02}:{:02}:{:02}", hours, minutes, seconds);
 }
 
 #[derive(Clone, Debug, Default)]

@@ -16,56 +16,12 @@ use log::info;
 use crate::display_driver;
 use crate::display_driver::FramebufferTarget;
 
-pub type ScreenCaptureHandle = Arc<Mutex<ScreenCapture>>;
-
-pub struct ScreenCapture {
-    width: usize,
-    height: usize,
-    pixels: Vec<u16>,
-    sequence: u64,
-}
-
-impl ScreenCapture {
-    pub fn new(width: usize, height: usize) -> Self {
-        Self {
-            width,
-            height,
-            pixels: vec![0; width * height],
-            sequence: 0,
-        }
-    }
-
-    pub fn new_handle(width: usize, height: usize) -> ScreenCaptureHandle {
-        Arc::new(Mutex::new(Self::new(width, height)))
-    }
-
-    pub fn update_from(&mut self, pixels: &[u16]) {
-        if pixels.len() == self.pixels.len() {
-            self.pixels.copy_from_slice(pixels);
-            self.sequence = self.sequence.wrapping_add(1);
-        }
-    }
-
-    pub fn dimensions(&self) -> (usize, usize) {
-        (self.width, self.height)
-    }
-
-    pub fn pixels(&self) -> &[u16] {
-        &self.pixels
-    }
-
-    pub fn sequence(&self) -> u64 {
-        self.sequence
-    }
-}
-
 pub struct DoubleBuffer<const W: usize, const H: usize> {
     sender: Option<std::sync::mpsc::Sender<usize>>,
     toggle: bool,
     fbuf0: DmaReadyFramebuffer<W, H>,
     fbuf1: DmaReadyFramebuffer<W, H>,
     mutex: Arc<Mutex<bool>>,
-    capture: Option<ScreenCaptureHandle>,
 }
 
 impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
@@ -79,12 +35,7 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
             fbuf0,
             fbuf1,
             mutex: Arc::new(Mutex::new(true)),
-            capture: None,
         }
-    }
-
-    pub fn set_capture(&mut self, capture: ScreenCaptureHandle) {
-        self.capture = Some(capture);
     }
 
     pub fn start_thread(
@@ -162,14 +113,6 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
         } else {
             &mut self.fbuf1
         };
-
-        if let Some(capture) = &self.capture {
-            if let Ok(mut guard) = capture.try_lock() {
-                let ptr = fbuf.framebuffer as *const u16;
-                let slice = unsafe { std::slice::from_raw_parts(ptr, W * H) };
-                guard.update_from(slice);
-            }
-        }
 
         if let Some(sender) = &self.sender {
             sender.send(fbuf.framebuffer as usize).unwrap();
