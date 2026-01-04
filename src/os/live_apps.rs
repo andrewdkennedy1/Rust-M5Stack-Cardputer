@@ -38,11 +38,24 @@ enum LiveAppState {
     Python(PythonApp),
 }
 
+impl LiveAppState {
+    fn teardown(self) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
+        match self {
+            LiveAppState::Wasm(_) => None,
+            LiveAppState::Python(app) => app.teardown(),
+        }
+    }
+}
+
 impl LiveAppRunner {
-    pub fn load(kind: LiveAppKind, path: PathBuf) -> Result<Self, LiveAppError> {
+    pub fn load(
+        kind: LiveAppKind,
+        path: PathBuf,
+        speaker: esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>,
+    ) -> Result<Self, LiveAppError> {
         let app = match kind {
             LiveAppKind::Wasm => LiveAppState::Wasm(WasmApp::load(path)?),
-            LiveAppKind::Python => LiveAppState::Python(PythonApp::load(path)?),
+            LiveAppKind::Python => LiveAppState::Python(PythonApp::load(path, speaker)?),
         };
 
         Ok(Self {
@@ -71,6 +84,12 @@ impl LiveAppRunner {
             LiveAppState::Wasm(app) => app.tick(buffers, input, dt),
             LiveAppState::Python(app) => app.tick(buffers, input, dt),
         }
+    }
+
+    pub fn teardown(
+        self,
+    ) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
+        self.app.teardown()
     }
 }
 

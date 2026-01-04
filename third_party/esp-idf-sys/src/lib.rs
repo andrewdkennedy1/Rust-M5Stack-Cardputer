@@ -79,6 +79,7 @@ pub fn link_patches() -> PatchesRef {
 #[allow(rustdoc::all)]
 #[allow(improper_ctypes)] // TODO: For now, as 5.0 spits out tons of these
 #[allow(dead_code)]
+#[allow(unnecessary_transmutes)]
 mod bindings {
     #[cfg(any(esp32, esp32s2, esp32s3, esp32c6, esp32h2))]
     use crate::pcnt::*;

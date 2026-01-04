@@ -9,6 +9,8 @@
 #include "py/persistentcode.h"
 #include "py/runtime.h"
 #include "py/stackctrl.h"
+#include "py/builtin.h"
+#include "py/objlist.h"
 #include "port/micropython_embed.h"
 
 #include "cardputer_mpy.h"
@@ -304,6 +306,13 @@ int cardputer_mpy_start(const char *path, size_t heap_size) {
     mp_stack_ctrl_init();
     mp_stack_set_limit(16 * 1024);
     mp_embed_init(g_heap, heap_size, &stack_top);
+    
+    #if MICROPY_PY_SYS
+    // Initialize sys.path to include current directory and /sdcard/lib
+    mp_obj_list_init(mp_sys_path, 0);
+    mp_obj_list_append(mp_sys_path, mp_obj_new_str("", 0));
+    mp_obj_list_append(mp_sys_path, mp_obj_new_str("/sdcard/lib", 11));
+    #endif
 
     int exec_result = exec_source_path(path);
     if (exec_result != 0) {
@@ -349,6 +358,13 @@ int cardputer_mpy_start_mpy(const char *path, size_t heap_size) {
     mp_stack_ctrl_init();
     mp_stack_set_limit(16 * 1024);
     mp_embed_init(g_heap, heap_size, &stack_top);
+    
+    #if MICROPY_PY_SYS
+    // Initialize sys.path to include current directory and /sdcard/lib
+    mp_obj_list_init(mp_sys_path, 0);
+    mp_obj_list_append(mp_sys_path, mp_obj_new_str("", 0));
+    mp_obj_list_append(mp_sys_path, mp_obj_new_str("/sdcard/lib", 11));
+    #endif
 
     int exec_result = exec_mpy_path(path);
     if (exec_result != 0) {

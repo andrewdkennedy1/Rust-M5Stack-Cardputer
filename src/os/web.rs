@@ -42,6 +42,7 @@ pub type WifiStateHandle = Arc<Mutex<WifiState>>;
 enum WebCommand {
     Pause(Sender<()>),
     Resume(Sender<()>),
+    UpdateSdRoot(PathBuf),
 }
 
 pub struct WebHandle {
@@ -66,6 +67,10 @@ impl WebHandle {
         if self.command_tx.send(WebCommand::Resume(tx)).is_ok() {
             let _ = rx.recv_timeout(Duration::from_millis(1000));
         }
+    }
+
+    pub fn set_sd_root(&self, path: PathBuf) {
+        let _ = self.command_tx.send(WebCommand::UpdateSdRoot(path));
     }
 }
 
@@ -194,6 +199,19 @@ impl WifiWorker {
             self.paused = false;
         }
     }
+
+    fn update_sd_root(&mut self, path: PathBuf) {
+        self.sd_root = Some(path);
+        // If we were failed because of missing SD, try to bring up now.
+        if self.server.is_none() && !self.paused {
+            self.server = bringup_wifi_and_server(
+                &mut self.wifi,
+                &self.sd_root,
+                &self.state,
+                self.control_tx.clone(),
+            );
+        }
+    }
 }
 
 fn wifi_thread(
@@ -214,6 +232,9 @@ fn wifi_thread(
             Ok(WebCommand::Resume(reply)) => {
                 worker.resume();
                 let _ = reply.send(());
+            }
+            Ok(WebCommand::UpdateSdRoot(path)) => {
+                worker.update_sd_root(path);
             }
             Err(_) => break,
         }

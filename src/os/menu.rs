@@ -8,6 +8,8 @@ use super::live_apps::LiveAppKind;
 #[derive(Clone, Debug)]
 pub enum MenuItem {
     Back,
+    MountSD,
+    UsbMsc,
     Dir(PathBuf),
     App(PathBuf),
     LiveApp(LiveAppKind, PathBuf),
@@ -146,10 +148,11 @@ fn read_menu_items(root: &Path, current: &Path) -> std::io::Result<Vec<MenuEntry
     let mut items = Vec::new();
     if current != root {
         items.push(build_entry(MenuItem::Back));
+    } else if fs::read_dir(current).is_ok() {
+        items.push(build_entry(MenuItem::UsbMsc));
     }
 
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
+    for entry in fs::read_dir(current).into_iter().flatten().flatten() {
         let path = entry.path();
 
         if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
@@ -169,6 +172,10 @@ fn read_menu_items(root: &Path, current: &Path) -> std::io::Result<Vec<MenuEntry
         }
     }
 
+    if items.is_empty() && current == root {
+        items.push(build_entry(MenuItem::MountSD));
+    }
+
     items.sort_by(|a, b| {
         let (ka, na) = &a.sort_key;
         let (kb, nb) = &b.sort_key;
@@ -181,6 +188,8 @@ fn read_menu_items(root: &Path, current: &Path) -> std::io::Result<Vec<MenuEntry
 fn build_entry(item: MenuItem) -> MenuEntry {
     let (label, sort_name, sort_group) = match &item {
         MenuItem::Back => ("..".to_string(), String::new(), 0),
+        MenuItem::MountSD => ("Mount SD Card".to_string(), String::new(), 0),
+        MenuItem::UsbMsc => ("Expose via USB".to_string(), String::new(), 0),
         MenuItem::Dir(path) => (format!("[{}]", path_name(path)), path_sort_key(path), 1),
         MenuItem::LiveApp(_, path) => (path_name(path), path_sort_key(path), 2),
         MenuItem::App(path) => (path_name(path), path_sort_key(path), 3),

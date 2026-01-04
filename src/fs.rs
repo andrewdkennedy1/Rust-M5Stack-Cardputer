@@ -4,7 +4,7 @@ use std::ffi::{c_void, CString};
 
 pub struct SdCard {
     card: *mut sys::sdmmc_card_t,
-    base_path: CString,
+    _base_path: CString,
     #[cfg(feature = "usb_msc")]
     sdspi_handle: sys::sdspi_dev_handle_t,
 }
@@ -85,7 +85,7 @@ impl SdCard {
 
         let mut storage_cfg: sys::tinyusb_msc_sdmmc_config_t =
             unsafe { std::mem::zeroed() };
-        storage_cfg.card = card.as_mut() as *mut c_void;
+        storage_cfg.card = card.as_mut() as *mut sys::sdmmc_card_t as *mut c_void;
         let ret = unsafe { sys::tinyusb_msc_storage_init_sdmmc(&storage_cfg) };
         if ret != 0 {
             info!("USB MSC storage init failed: {}", ret);
@@ -102,7 +102,7 @@ impl SdCard {
 
         Ok(Self {
             card: Box::into_raw(card),
-            base_path: mount_path_c,
+            _base_path: mount_path_c,
             sdspi_handle: handle,
         })
     }
@@ -189,7 +189,7 @@ impl SdCard {
 
         Ok(Self {
             card,
-            base_path: mount_path_c,
+            _base_path: mount_path_c,
         })
     }
 
@@ -214,7 +214,7 @@ impl Drop for SdCard {
 impl Drop for SdCard {
     fn drop(&mut self) {
         unsafe {
-            sys::esp_vfs_fat_sdcard_unmount(self.base_path.as_ptr(), self.card);
+            sys::esp_vfs_fat_sdcard_unmount(self._base_path.as_ptr(), self.card);
         }
     }
 }

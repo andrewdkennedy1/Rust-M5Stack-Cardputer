@@ -32,15 +32,12 @@ const UI_TICK_MS: u64 = 16;
 
 fn refresh_menu_or_warn(
     menu: &mut MenuState,
-    sd_ready: bool,
+    _sd_ready: bool,
     usb_active: bool,
     warn_on_usb: bool,
     buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
     keyboard: &mut crate::keyboard::CardputerKeyboard<'static>,
 ) {
-    if !sd_ready {
-        return;
-    }
     if usb_active {
         if warn_on_usb {
             warn_usb_storage_active(buffers, keyboard);
@@ -149,8 +146,10 @@ pub fn boot() -> ! {
     let crate::hal::CardputerPeripherals {
         display,
         mut keyboard,
-        speaker: _,
+        speaker,
     } = cardputer;
+
+    let mut speaker = Some(speaker);
 
     let mut buffers = OwnedDoubleBuffer::<SCREEN_WIDTH, SCREEN_HEIGHT>::new();
     buffers.start_thread(display);
@@ -158,59 +157,43 @@ pub fn boot() -> ! {
     render_status(
         &mut buffers,
         "Cardputer RustOS",
-        &["Mounting SD card..."],
+        &["Starting..."],
         None,
     );
 
-    let sd = mount_sd_card();
-
-    let sd_ready = sd.is_some();
+    let mut sd: Option<crate::fs::SdCard> = None;
+    let mut sd_ready = false;
     let ota_ready = ota_partition_available();
-    let mut usb_msc = sd
-        .as_ref()
-        .and_then(|card| match usb_msc::UsbMsc::init(card) {
-            Ok(handle) => Some(handle),
-            Err(err) => {
-                error!("USB MSC unavailable: {}", err);
-                None
-            }
-        });
+    let mut usb_msc: Option<usb_msc::UsbMsc> = None;
 
     let (control_tx, control_rx) = std::sync::mpsc::channel();
     let web_handle = web::start_wifi_file_server(
         modem,
-        if sd_ready {
-            Some(PathBuf::from(SD_ROOT))
-        } else {
-            None
-        },
+        None,
         control_tx,
     );
     let mut status_provider = StatusProvider::new(web_handle.wifi_state(), BatteryGauge::new());
 
     let root = PathBuf::from(SD_ROOT);
-    let start = if std::path::Path::new(SD_APPS_PATH).is_dir() {
-        PathBuf::from(SD_APPS_PATH)
-    } else {
-        root.clone()
-    };
+    let mut menu = MenuState::new(root.clone(), root.clone());
+    let mut menu_needs_refresh = true;
 
-    let mut menu = MenuState::new(root, start);
-    let usb_active = usb_msc
-        .as_ref()
-        .map(|msc| msc.host_active())
-        .unwrap_or(false);
-    refresh_menu_or_warn(
-        &mut menu,
-        sd_ready,
-        usb_active,
-        false,
-        &mut buffers,
-        &mut keyboard,
-    );
-    let mut menu_needs_refresh = false;
+    // Serial Command Listener
+    let serial_tx = control_tx.clone();
+    std::thread::spawn(move || {
+        use std::io::{self, BufRead};
+        let stdin = io::stdin();
+        for line in stdin.lock().lines().flatten() {
+            let cmd = match line.trim() {
+                "RECOVERY" => RemoteCommand::FlashBin(PathBuf::from("__FACTORY__")), // Special marker for factory reset
+                "REBOOT" => RemoteCommand::FlashBin(PathBuf::from("__REBOOT__")),   // Special marker for reboot
+                _ => continue,
+            };
+            let _ = serial_tx.send(cmd);
+        }
+    });
 
-    let context = AppContext::new(sd_ready, ota_ready);
+    let mut context = AppContext::new(sd_ready, ota_ready);
     let mut live_app: Option<LiveAppRunner> = None;
     let mut web_pause = WebPause::new();
 
@@ -234,7 +217,9 @@ pub fn boot() -> ! {
                 match command {
                     RemoteCommand::Menu(action) => {
                         if matches!(action, MenuAction::Back) {
-                            live_app = None;
+                            if let Some(app) = live_app.take() {
+                                speaker = app.teardown();
+                            }
                             menu_needs_refresh = true;
                         } else if let Some(key) = menu_action_to_key(action) {
                             injected_key = Some((crate::keyboard::KeyEvent::Pressed, key));
@@ -251,20 +236,24 @@ pub fn boot() -> ! {
                         } else {
                             menu.release_memory();
                             menu_needs_refresh = true;
-                            match LiveAppRunner::load(kind, path) {
-                                Ok(new_app) => {
-                                    live_app = Some(new_app);
-                                }
-                                Err(err) => {
-                                    show_message_and_wait(
-                                        &mut buffers,
-                                        &mut keyboard,
-                                        "App Error",
-                                        &[format!("{:?}", err)],
-                                    );
-                                    live_app = None;
-                                    web_pause.set_live(&web_handle, false);
-                                    menu_needs_refresh = true;
+                            if let Some(s) = speaker.take() {
+                                match LiveAppRunner::load(kind, path, s) {
+                                    Ok(new_app) => {
+                                        live_app = Some(new_app);
+                                    }
+                                    Err(err) => {
+                                        show_message_and_wait(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            "App Error",
+                                            &[format!("{:?}", err)],
+                                        );
+                                        // TODO put speaker back? 
+                                        // match err { LiveAppError::LoadFailed(_) => ... }
+                                        live_app = None;
+                                        web_pause.set_live(&web_handle, false);
+                                        menu_needs_refresh = true;
+                                    }
                                 }
                             }
                         }
@@ -283,7 +272,9 @@ pub fn boot() -> ! {
                 match app.tick(&mut buffers, &mut keyboard, injected_key) {
                     Ok(LiveAppOutcome::Continue) => {}
                     Ok(LiveAppOutcome::Exit) => {
-                        live_app = None;
+                        if let Some(app) = live_app.take() {
+                            speaker = app.teardown();
+                        }
                         menu_needs_refresh = true;
                     }
                     Err(err) => {
@@ -293,7 +284,9 @@ pub fn boot() -> ! {
                             "App Error",
                             &[format!("{:?}", err)],
                         );
-                        live_app = None;
+                        if let Some(app) = live_app.take() {
+                            speaker = app.teardown();
+                        }
                         web_pause.set_live(&web_handle, false);
                         menu_needs_refresh = true;
                     }
@@ -369,6 +362,44 @@ pub fn boot() -> ! {
                                         );
                                     }
                                 }
+                                MenuItem::MountSD => {
+                                    render_status(&mut buffers, "Mounting", &["Mounting SD card..."], None);
+                                    if let Some(card) = mount_sd_card() {
+                                        sd = Some(card);
+                                        sd_ready = true;
+                                        context.sd_ready = true;
+                                        web_handle.set_sd_root(PathBuf::from(SD_ROOT));
+                                        if std::path::Path::new(SD_APPS_PATH).is_dir() {
+                                            menu.enter_dir(PathBuf::from(SD_APPS_PATH));
+                                        }
+                                        menu_needs_refresh = true;
+                                    } else {
+                                        show_message_and_wait(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            "Mount Failed",
+                                            &["Check SD card", "and try again."],
+                                        );
+                                    }
+                                }
+                                MenuItem::UsbMsc => {
+                                    if let Some(ref card) = sd {
+                                        show_message_and_wait(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            "USB Storage",
+                                            &[
+                                                "USB driver will block",
+                                                "the serial port!",
+                                                "Press any key to",
+                                                "start exposing SD...",
+                                            ],
+                                        );
+                                        usb_msc = usb_msc::UsbMsc::init(card).ok();
+                                        web_pause.sync(&web_handle);
+                                        menu_needs_refresh = true;
+                                    }
+                                }
                                 MenuItem::Dir(path) => {
                                     if usb_active {
                                         warn_usb_storage_active(&mut buffers, &mut keyboard);
@@ -411,8 +442,8 @@ pub fn boot() -> ! {
                                             );
                                             web_pause.set_live(&web_handle, false);
                                             menu_needs_refresh = true;
-                                        } else {
-                                            match LiveAppRunner::load(kind, path) {
+                                        } else if let Some(s) = speaker.take() {
+                                            match LiveAppRunner::load(kind, path, s) {
                                                 Ok(app) => {
                                                     live_app = Some(app);
                                                 }
@@ -446,25 +477,31 @@ pub fn boot() -> ! {
                         menu.release_memory();
                         menu_needs_refresh = true;
                         web_pause.set_live(&web_handle, true);
-                        match LiveAppRunner::load(kind, path) {
-                            Ok(app) => {
-                                live_app = Some(app);
-                            }
-                            Err(err) => {
-                                show_message_and_wait(
-                                    &mut buffers,
-                                    &mut keyboard,
-                                    "App Error",
-                                    &[format!("{:?}", err)],
-                                );
-                                web_pause.set_live(&web_handle, false);
-                                menu_needs_refresh = true;
+                        if let Some(s) = speaker.take() {
+                            match LiveAppRunner::load(kind, path, s) {
+                                Ok(app) => {
+                                    live_app = Some(app);
+                                }
+                                Err(err) => {
+                                    show_message_and_wait(
+                                        &mut buffers,
+                                        &mut keyboard,
+                                        "App Error",
+                                        &[format!("{:?}", err)],
+                                    );
+                                    web_pause.set_live(&web_handle, false);
+                                    menu_needs_refresh = true;
+                                }
                             }
                         }
                     }
                 }
                 RemoteCommand::FlashBin(path) => {
-                    if usb_active {
+                    if path.to_str() == Some("__FACTORY__") {
+                        chainload::reboot_to_factory();
+                    } else if path.to_str() == Some("__REBOOT__") {
+                        unsafe { sys::esp_restart(); }
+                    } else if usb_active {
                         warn_usb_storage_active(&mut buffers, &mut keyboard);
                     } else {
                         launch_or_report(&mut buffers, &mut keyboard, &context, path);

@@ -12,6 +12,18 @@ use super::{tick_interval, LiveAppError, LiveAppOutcome};
 // 0 lets the runtime auto-size the heap based on free memory.
 const DEFAULT_PY_HEAP_BYTES: usize = 0;
 
+static SPEAKER: std::sync::Mutex<Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>>> =
+    std::sync::Mutex::new(None);
+
+extern "C" fn i2s_write_callback(data: *const u8, len: usize) {
+    if let Ok(mut speaker) = SPEAKER.lock() {
+        if let Some(speaker) = speaker.as_mut() {
+            let slice = unsafe { std::slice::from_raw_parts(data, len) };
+            let _ = speaker.write(slice, u32::MAX);
+        }
+    }
+}
+
 extern "C" {
     fn cardputer_mpy_start(path: *const c_char, heap_size: usize) -> i32;
     fn cardputer_mpy_start_mpy(path: *const c_char, heap_size: usize) -> i32;
@@ -23,12 +35,29 @@ extern "C" {
     ) -> i32;
     fn cardputer_mpy_stop();
     fn cardputer_mpy_last_error() -> *const c_char;
+    fn cardputer_host_set_i2s_write_callback(callback: extern "C" fn(*const u8, usize));
 }
 
 pub struct PythonApp;
 
 impl PythonApp {
-    pub fn load(path: PathBuf) -> Result<Self, LiveAppError> {
+    pub fn teardown(self) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
+        let mut s = SPEAKER.lock().unwrap();
+        s.take()
+    }
+
+    pub fn load(
+        path: PathBuf,
+        speaker: esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>,
+    ) -> Result<Self, LiveAppError> {
+        {
+            let mut s = SPEAKER.lock().unwrap();
+            *s = Some(speaker);
+        }
+        unsafe {
+            cardputer_host_set_i2s_write_callback(i2s_write_callback);
+        }
+
         let is_mpy = path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -77,6 +106,8 @@ impl PythonApp {
 impl Drop for PythonApp {
     fn drop(&mut self) {
         unsafe { cardputer_mpy_stop() };
+        let mut s = SPEAKER.lock().unwrap();
+        *s = None;
     }
 }
 

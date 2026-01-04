@@ -14,6 +14,11 @@
 static uint16_t *g_framebuffer = NULL;
 static int g_key_code = -1;
 static int g_key_event = 0;
+static void (*g_i2s_write_callback)(const uint8_t *, size_t) = NULL;
+
+void cardputer_host_set_i2s_write_callback(void (*callback)(const uint8_t *, size_t)) {
+    g_i2s_write_callback = callback;
+}
 
 void cardputer_host_set_framebuffer(uint16_t *framebuffer) {
     g_framebuffer = framebuffer;
@@ -118,6 +123,17 @@ STATIC mp_obj_t cardputer_present(void) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_0(cardputer_present_obj, cardputer_present);
 
+STATIC mp_obj_t cardputer_i2s_write(mp_obj_t data_obj) {
+    if (g_i2s_write_callback == NULL) {
+        return mp_const_none;
+    }
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(data_obj, &bufinfo, MP_BUFFER_READ);
+    g_i2s_write_callback(bufinfo.buf, bufinfo.len);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(cardputer_i2s_write_obj, cardputer_i2s_write);
+
 STATIC const mp_rom_map_elem_t cardputer_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_cardputer) },
     { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&cardputer_clear_obj) },
@@ -127,6 +143,7 @@ STATIC const mp_rom_map_elem_t cardputer_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_screen_width), MP_ROM_PTR(&cardputer_screen_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_screen_height), MP_ROM_PTR(&cardputer_screen_height_obj) },
     { MP_ROM_QSTR(MP_QSTR_present), MP_ROM_PTR(&cardputer_present_obj) },
+    { MP_ROM_QSTR(MP_QSTR_i2s_write), MP_ROM_PTR(&cardputer_i2s_write_obj) },
 };
 
 STATIC MP_DEFINE_CONST_DICT(cardputer_module_globals, cardputer_module_globals_table);

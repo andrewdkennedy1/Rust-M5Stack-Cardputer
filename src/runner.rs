@@ -23,6 +23,18 @@ const FRAMEBUFFER_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 const TICK_SLEEP_MS: u64 = 16;
 const PY_HEAP_REQUEST_BYTES: usize = 256 * 1024;
 
+static SPEAKER: std::sync::Mutex<Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>>> =
+    std::sync::Mutex::new(None);
+
+extern "C" fn i2s_write_callback(data: *const u8, len: usize) {
+    if let Ok(mut speaker) = SPEAKER.lock() {
+        if let Some(speaker) = speaker.as_mut() {
+            let slice = unsafe { std::slice::from_raw_parts(data, len) };
+            let _ = speaker.write(slice, u32::MAX);
+        }
+    }
+}
+
 extern "C" {
     fn cardputer_mpy_start(path: *const c_char, heap_size: usize) -> i32;
     fn cardputer_mpy_start_mpy(path: *const c_char, heap_size: usize) -> i32;
@@ -34,6 +46,7 @@ extern "C" {
     ) -> i32;
     fn cardputer_mpy_stop();
     fn cardputer_mpy_last_error() -> *const c_char;
+    fn cardputer_host_set_i2s_write_callback(callback: extern "C" fn(*const u8, usize));
 }
 
 pub fn run() -> ! {
@@ -42,8 +55,16 @@ pub fn run() -> ! {
     let CardputerPeripherals {
         mut display,
         mut keyboard,
-        speaker: _,
+        speaker,
     } = cardputer;
+
+    {
+        let mut s = SPEAKER.lock().unwrap();
+        *s = Some(speaker);
+    }
+    unsafe {
+        cardputer_host_set_i2s_write_callback(i2s_write_callback);
+    }
 
     let mut framebuffer = vec![0u16; FRAMEBUFFER_PIXELS];
 

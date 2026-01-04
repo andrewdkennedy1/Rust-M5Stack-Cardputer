@@ -1,0 +1,9 @@
+version: '3'
+services:
+  builder:
+    build: .
+    volumes:
+      - .:/workspace
+    environment:
+      - CARGO_TARGET_DIR=/workspace/target
+    command: cargo build --release --bin loader
