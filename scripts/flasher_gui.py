@@ -278,8 +278,19 @@ class FlasherGUI:
         threading.Thread(target=self._build_task, args=(target,), daemon=True).start()
 
     def _build_task(self, target):
-        self.log(f"\n[BUILD] Target: {target}")
-        self.run_command(["cargo", "build", "--release", "--bin", target])
+        self.log(f"\n[BUILD] Using Persistent Docker Container for: {target}")
+        
+        # 1. Ensure container is running
+        check = subprocess.run("docker compose ps -q builder", shell=True, capture_output=True, text=True)
+        if not check.stdout.strip():
+             self.log("[INFO] Starting Docker container (this may take a moment)...")
+             if self.run_command(["docker", "compose", "up", "-d", "--build"]) != 0:
+                 self.log("[ERROR] Failed to start container")
+                 return
+
+        # 2. Run build script inside container
+        self.log("[INFO] Running incremental build inside container...")
+        self.run_command(["docker", "compose", "exec", "-T", "builder", "bash", "scripts/internal_build.sh"])
 
     def on_flash(self):
         target = self.combo_target.get()
@@ -336,14 +347,20 @@ class FlasherGUI:
                 self.monitor.active = True
 
     def find_elf(self, bin_name):
-        paths = [f"target/xtensa-esp32s3-espidf/release/{bin_name}", f"C:/t/xtensa-esp32s3-espidf/release/{bin_name}"]
+        # We now copy the binary to target/loader/loader (or just target/bin_name if generalized)
+        # Check specific exfiltrated path first
+        paths = [
+            f"target/{bin_name}/{bin_name}", # New structure from internal_build.sh
+            f"target/{bin_name}",            # Fallback
+            f"target/xtensa-esp32s3-espidf/release/{bin_name}" # Old structure
+        ]
         for p in paths:
             if os.path.exists(p): return p
         return None
 
     def run_command(self, cmd_list):
         self.log(f"RUN: {' '.join(cmd_list)}")
-        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True)
+        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', shell=True)
         for line in process.stdout:
             self.log(line.strip())
         process.wait()

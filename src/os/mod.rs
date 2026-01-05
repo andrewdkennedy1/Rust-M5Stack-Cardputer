@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use esp_idf_svc::sys;
-use log::error;
+
 
 use crate::runtime;
 use crate::swapchain::{DoubleBuffer, OwnedDoubleBuffer};
@@ -170,7 +170,7 @@ pub fn boot() -> ! {
     let web_handle = web::start_wifi_file_server(
         modem,
         None,
-        control_tx,
+        control_tx.clone(),
     );
     let mut status_provider = StatusProvider::new(web_handle.wifi_state(), BatteryGauge::new());
 

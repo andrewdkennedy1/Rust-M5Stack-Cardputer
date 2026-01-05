@@ -99,9 +99,9 @@ void nlr_jump_fail(void *val) {
     }
 }
 
-#if !defined(NDEBUG) && !defined(ESP_PLATFORM)
+#ifndef NDEBUG
 // Used when debugging is enabled.
-__attribute__((weak)) void __assert_func(const char *file, int line, const char *func, const char *expr) {
+void __assert_func(const char *file, int line, const char *func, const char *expr) {
     for (;;) {
     }
 }

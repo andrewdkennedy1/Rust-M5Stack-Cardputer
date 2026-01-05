@@ -49,11 +49,7 @@ unsigned int nlr_push(nlr_buf_t *nlr) {
         "s32i.n  a13, a2, 36        \n"
         "s32i.n  a14, a2, 40        \n"
         "s32i.n  a15, a2, 44        \n"
-        "mov.n   a15, a2            \n"
-        "call0   nlr_push_tail      \n" // do the rest in C
-        "l32i.n  a0, a15, 8         \n"
-        "l32i.n  a15, a15, 44       \n"
-        "ret.n                      \n"
+        "j      nlr_push_tail       \n" // do the rest in C
         );
 
     return 0; // needed to silence compiler warning

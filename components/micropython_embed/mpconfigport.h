@@ -2,6 +2,14 @@
 #include <port/mpconfigport_common.h>
 
 #define MICROPY_CONFIG_ROM_LEVEL                (MICROPY_CONFIG_ROM_LEVEL_MINIMUM)
+#define MICROPY_PY_SYS_PLATFORM                 "Espressif"
+#define MICROPY_PY_BUILTINS_FILTER              (0)
+#define MICROPY_PY_BUILTINS_ENUMERATE           (0)
+#define MICROPY_PY_BUILTINS_REVERSED            (0)
+#define MICROPY_PY_BUILTINS_PROPERTY            (0)
+#define MICROPY_PY_BUILTINS_SLICE               (0)
+#define MICROPY_PY_BUILTINS_DICT_FROMKEYS       (0)
+#define MICROPY_PY_ASYNC_AWAIT                  (0)
 #define MICROPY_ENABLE_COMPILER                 (1)
 #define MICROPY_ENABLE_GC                       (1)
 #define MICROPY_PY_GC                           (1)

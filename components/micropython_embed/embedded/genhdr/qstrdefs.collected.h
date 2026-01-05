@@ -16,6 +16,10 @@ Q(BaseException)
 
 Q(BaseException)
 
+Q(BytesIO)
+
+Q(BytesIO)
+
 Q(EOFError)
 
 Q(EOFError)
@@ -86,6 +90,10 @@ Q(StopIteration)
 
 Q(StopIteration)
 
+Q(StringIO)
+
+Q(StringIO)
+
 Q(SyntaxError)
 
 Q(SyntaxError)
@@ -134,9 +142,13 @@ Q(__delitem__)
 
 Q(__enter__)
 
+Q(__enter__)
+
 Q(__eq__)
 
 Q(__eq__)
+
+Q(__exit__)
 
 Q(__exit__)
 
@@ -183,6 +195,14 @@ Q(__main__)
 Q(__main__)
 
 Q(__module__)
+
+Q(__name__)
+
+Q(__name__)
+
+Q(__name__)
+
+Q(__name__)
 
 Q(__name__)
 
@@ -280,6 +300,8 @@ Q(append)
 
 Q(args)
 
+Q(argv)
+
 Q(bin)
 
 Q(bool)
@@ -294,11 +316,21 @@ Q(builtins)
 
 Q(bytecode)
 
+Q(byteorder)
+
 Q(bytes)
 
 Q(bytes)
+
+Q(bytes)
+
+Q(calcsize)
 
 Q(callable)
+
+Q(cardputer)
+
+Q(cardputer)
 
 Q(cardputer)
 
@@ -315,6 +347,10 @@ Q(clear)
 Q(clear)
 
 Q(clear)
+
+Q(clear)
+
+Q(close)
 
 Q(close)
 
@@ -356,11 +392,17 @@ Q(eval)
 
 Q(exec)
 
+Q(exit)
+
 Q(extend)
 
 Q(fill_rect)
 
+Q(fill_rect)
+
 Q(find)
+
+Q(flush)
 
 Q(format)
 
@@ -392,15 +434,23 @@ Q(get)
 
 Q(getattr)
 
+Q(getvalue)
+
 Q(globals)
 
 Q(hasattr)
 
 Q(hash)
 
+Q(help)
+
 Q(hex)
 
+Q(i2s_write)
+
 Q(id)
+
+Q(implementation)
 
 Q(index)
 
@@ -413,6 +463,10 @@ Q(insert)
 Q(int)
 
 Q(int)
+
+Q(io)
+
+Q(io)
 
 Q(isalpha)
 
@@ -460,6 +514,8 @@ Q(little)
 
 Q(little)
 
+Q(little)
+
 Q(locals)
 
 Q(lower)
@@ -476,7 +532,11 @@ Q(mem_free)
 
 Q(micropython)
 
+Q(micropython)
+
 Q(module)
+
+Q(modules)
 
 Q(next)
 
@@ -486,7 +546,21 @@ Q(object)
 
 Q(oct)
 
+Q(open)
+
+Q(open)
+
 Q(ord)
+
+Q(pack)
+
+Q(pack_into)
+
+Q(path)
+
+Q(platform)
+
+Q(poll_key)
 
 Q(poll_key)
 
@@ -500,13 +574,25 @@ Q(pow)
 
 Q(present)
 
+Q(present)
+
+Q(preview)
+
 Q(print)
 
-Q(range)
+Q(print_exception)
 
 Q(range)
 
 Q(range)
+
+Q(range)
+
+Q(read)
+
+Q(readinto)
+
+Q(readline)
 
 Q(remove)
 
@@ -530,13 +616,21 @@ Q(rstrip)
 
 Q(screen_height)
 
+Q(screen_height)
+
 Q(screen_width)
+
+Q(screen_width)
+
+Q(seek)
 
 Q(send)
 
 Q(send)
 
 Q(sep)
+
+Q(set_pixel)
 
 Q(set_pixel)
 
@@ -560,7 +654,15 @@ Q(str)
 
 Q(str)
 
+Q(str)
+
+Q(str)
+
 Q(strip)
+
+Q(struct)
+
+Q(struct)
 
 Q(sum)
 
@@ -569,6 +671,12 @@ Q(super)
 Q(super)
 
 Q(super)
+
+Q(sys)
+
+Q(sys)
+
+Q(tell)
 
 Q(throw)
 
@@ -584,13 +692,25 @@ Q(type)
 
 Q(type)
 
+Q(unpack)
+
+Q(unpack_from)
+
 Q(update)
 
 Q(upper)
 
+Q(usys)
+
 Q(value)
 
 Q(values)
+
+Q(version)
+
+Q(version_info)
+
+Q(write)
 
 Q(zip)
 

@@ -1,9 +1,12 @@
-version: '3'
 services:
   builder:
     build: .
     volumes:
       - .:/workspace
+      - rust_cache:/cache
     environment:
-      - CARGO_TARGET_DIR=/workspace/target
-    command: cargo build --release --bin loader
+      - CARGO_TARGET_DIR=/cache/target
+      - CARGO_HOME=/cache/cargo
+
+volumes:
+  rust_cache:

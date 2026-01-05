@@ -1,5 +1,28 @@
 
+import os
+
 header_path = 'components/micropython_embed/embedded/genhdr/qstrdefs.generated.h'
+if not os.path.exists(header_path):
+    print("File not found")
+    exit(1)
+
+with open(header_path, 'r') as f:
+    lines = f.readlines()
+
+new_lines = []
+for line in lines:
+    if "Patched by AI" in line:
+        continue
+    # Filter out our specific QSTRs if they already exist in the file
+    # This is to avoid duplicates if the build system actually has them elsewhere
+    is_duplicate = False
+    for q in ["filter", "iterable", "enumerate", "fromkeys", "StopAsyncIteration", "__file__", "__path__", "array", "__aiter__", "__anext__", "default", "property", "reversed", "slice", "delattr", "help", "max", "min", "sys", "gc", "micropython", "_percent__hash_x", "_percent__hash_o"]:
+        if f"MP_QSTR_{q}," in line or f"MP_QSTR_{q} " in line:
+             is_duplicate = True
+             break
+    if not is_duplicate:
+        new_lines.append(line)
+
 new_qstrs = [
     'QDEF0(MP_QSTR_filter, 48677, 6, "filter")',
     'QDEF0(MP_QSTR_iterable, 37413, 8, "iterable")',
@@ -26,13 +49,9 @@ new_qstrs = [
     'QDEF0(MP_QSTR__percent__hash_o, 6764, 3, "%#o")',
 ]
 
-with open(header_path, 'r') as f:
-    original_content = f.read()
-
 with open(header_path, 'w') as f:
-    f.write(original_content)
+    f.writelines(new_lines)
     f.write('\n// Patched by AI to fix missing definitions\n')
     for q in new_qstrs:
-        if q not in original_content:
-            f.write(q + '\n')
-print("Patched " + header_path)
+        f.write(q + '\n')
+print("Cleaned and Patched " + header_path)

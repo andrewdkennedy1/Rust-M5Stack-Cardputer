@@ -7,14 +7,14 @@
 # 29 "<stdin>"
 # 1 "../micropython/py/mpconfig.h" 1
 # 29 "../micropython/py/mpconfig.h"
-# 1 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h" 1 3 4
-# 9 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h" 3 4
+# 1 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stdint.h" 1 3 4
+# 9 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stdint.h" 3 4
 # 1 "/usr/include/stdint.h" 1 3 4
 # 26 "/usr/include/stdint.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 1 3 4
 # 33 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 3 4
 # 1 "/usr/include/features.h" 1 3 4
-# 394 "/usr/include/features.h" 3 4
+# 392 "/usr/include/features.h" 3 4
 # 1 "/usr/include/features-time64.h" 1 3 4
 # 20 "/usr/include/features-time64.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
@@ -24,21 +24,21 @@
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
 # 20 "/usr/include/x86_64-linux-gnu/bits/timesize.h" 2 3 4
 # 22 "/usr/include/features-time64.h" 2 3 4
-# 395 "/usr/include/features.h" 2 3 4
-# 502 "/usr/include/features.h" 3 4
+# 393 "/usr/include/features.h" 2 3 4
+# 489 "/usr/include/features.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 1 3 4
-# 576 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 3 4
+# 561 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
-# 577 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
+# 562 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/long-double.h" 1 3 4
-# 578 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
-# 503 "/usr/include/features.h" 2 3 4
-# 526 "/usr/include/features.h" 3 4
+# 563 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
+# 490 "/usr/include/features.h" 2 3 4
+# 513 "/usr/include/features.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 1 3 4
 # 10 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/gnu/stubs-64.h" 1 3 4
 # 11 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 2 3 4
-# 527 "/usr/include/features.h" 2 3 4
+# 514 "/usr/include/features.h" 2 3 4
 # 34 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 2 3 4
 # 27 "/usr/include/stdint.h" 2 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/types.h" 1 3 4
@@ -203,8 +203,8 @@ typedef __uint64_t uint64_t;
 
 
 
-# 1 "/usr/include/x86_64-linux-gnu/bits/stdint-least.h" 1 3 4
-# 25 "/usr/include/x86_64-linux-gnu/bits/stdint-least.h" 3 4
+
+
 typedef __int_least8_t int_least8_t;
 typedef __int_least16_t int_least16_t;
 typedef __int_least32_t int_least32_t;
@@ -215,7 +215,6 @@ typedef __uint_least8_t uint_least8_t;
 typedef __uint_least16_t uint_least16_t;
 typedef __uint_least32_t uint_least32_t;
 typedef __uint_least64_t uint_least64_t;
-# 42 "/usr/include/stdint.h" 2 3 4
 
 
 
@@ -226,44 +225,44 @@ typedef signed char int_fast8_t;
 typedef long int int_fast16_t;
 typedef long int int_fast32_t;
 typedef long int int_fast64_t;
-# 60 "/usr/include/stdint.h" 3 4
+# 71 "/usr/include/stdint.h" 3 4
 typedef unsigned char uint_fast8_t;
 
 typedef unsigned long int uint_fast16_t;
 typedef unsigned long int uint_fast32_t;
 typedef unsigned long int uint_fast64_t;
-# 76 "/usr/include/stdint.h" 3 4
+# 87 "/usr/include/stdint.h" 3 4
 typedef long int intptr_t;
 
 
 typedef unsigned long int uintptr_t;
-# 90 "/usr/include/stdint.h" 3 4
+# 101 "/usr/include/stdint.h" 3 4
 typedef __intmax_t intmax_t;
 typedef __uintmax_t uintmax_t;
-# 10 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h" 2 3 4
+# 10 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stdint.h" 2 3 4
 # 30 "../micropython/py/mpconfig.h" 2
 
 
 
 
-# 1 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 1 3 4
-# 34 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 3 4
-# 1 "/usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h" 1 3 4
+# 1 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 1 3 4
+# 34 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 3 4
+# 1 "/usr/lib/gcc/x86_64-linux-gnu/12/include/syslimits.h" 1 3 4
 
 
 
 
 
 
-# 1 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 1 3 4
-# 205 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 3 4
+# 1 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 1 3 4
+# 203 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 3 4
 # 1 "/usr/include/limits.h" 1 3 4
 # 26 "/usr/include/limits.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 1 3 4
 # 27 "/usr/include/limits.h" 2 3 4
-# 206 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 2 3 4
-# 8 "/usr/lib/gcc/x86_64-linux-gnu/13/include/syslimits.h" 2 3 4
-# 35 "/usr/lib/gcc/x86_64-linux-gnu/13/include/limits.h" 2 3 4
+# 204 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 2 3 4
+# 8 "/usr/lib/gcc/x86_64-linux-gnu/12/include/syslimits.h" 2 3 4
+# 35 "/usr/lib/gcc/x86_64-linux-gnu/12/include/limits.h" 2 3 4
 # 35 "../micropython/py/mpconfig.h" 2
 # 100 "../micropython/py/mpconfig.h"
 # 1 "./mpconfigport.h" 1
@@ -276,10 +275,10 @@ typedef long mp_off_t;
 # 42 "../micropython/ports/embed/port/mpconfigport_common.h"
 # 1 "/usr/include/alloca.h" 1 3 4
 # 24 "/usr/include/alloca.h" 3 4
-# 1 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h" 1 3 4
-# 214 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h" 3 4
+# 1 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stddef.h" 1 3 4
+# 214 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stddef.h" 3 4
 
-# 214 "/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h" 3 4
+# 214 "/usr/lib/gcc/x86_64-linux-gnu/12/include/stddef.h" 3 4
 typedef long unsigned int size_t;
 # 25 "/usr/include/alloca.h" 2 3 4
 
@@ -355,6 +354,10 @@ Q(BaseException)
 
 Q(BaseException)
 
+Q(BytesIO)
+
+Q(BytesIO)
+
 Q(EOFError)
 
 Q(EOFError)
@@ -425,6 +428,10 @@ Q(StopIteration)
 
 Q(StopIteration)
 
+Q(StringIO)
+
+Q(StringIO)
+
 Q(SyntaxError)
 
 Q(SyntaxError)
@@ -473,9 +480,13 @@ Q(__delitem__)
 
 Q(__enter__)
 
+Q(__enter__)
+
 Q(__eq__)
 
 Q(__eq__)
+
+Q(__exit__)
 
 Q(__exit__)
 
@@ -522,6 +533,14 @@ Q(__main__)
 Q(__main__)
 
 Q(__module__)
+
+Q(__name__)
+
+Q(__name__)
+
+Q(__name__)
+
+Q(__name__)
 
 Q(__name__)
 
@@ -619,6 +638,8 @@ Q(append)
 
 Q(args)
 
+Q(argv)
+
 Q(bin)
 
 Q(bool)
@@ -633,11 +654,21 @@ Q(builtins)
 
 Q(bytecode)
 
+Q(byteorder)
+
 Q(bytes)
 
 Q(bytes)
+
+Q(bytes)
+
+Q(calcsize)
 
 Q(callable)
+
+Q(cardputer)
+
+Q(cardputer)
 
 Q(cardputer)
 
@@ -654,6 +685,10 @@ Q(clear)
 Q(clear)
 
 Q(clear)
+
+Q(clear)
+
+Q(close)
 
 Q(close)
 
@@ -695,11 +730,17 @@ Q(eval)
 
 Q(exec)
 
+Q(exit)
+
 Q(extend)
 
 Q(fill_rect)
 
+Q(fill_rect)
+
 Q(find)
+
+Q(flush)
 
 Q(format)
 
@@ -731,15 +772,23 @@ Q(get)
 
 Q(getattr)
 
+Q(getvalue)
+
 Q(globals)
 
 Q(hasattr)
 
 Q(hash)
 
+Q(help)
+
 Q(hex)
 
+Q(i2s_write)
+
 Q(id)
+
+Q(implementation)
 
 Q(index)
 
@@ -752,6 +801,10 @@ Q(insert)
 Q(int)
 
 Q(int)
+
+Q(io)
+
+Q(io)
 
 Q(isalpha)
 
@@ -799,6 +852,8 @@ Q(little)
 
 Q(little)
 
+Q(little)
+
 Q(locals)
 
 Q(lower)
@@ -815,7 +870,11 @@ Q(mem_free)
 
 Q(micropython)
 
+Q(micropython)
+
 Q(module)
+
+Q(modules)
 
 Q(next)
 
@@ -825,7 +884,21 @@ Q(object)
 
 Q(oct)
 
+Q(open)
+
+Q(open)
+
 Q(ord)
+
+Q(pack)
+
+Q(pack_into)
+
+Q(path)
+
+Q(platform)
+
+Q(poll_key)
 
 Q(poll_key)
 
@@ -839,13 +912,25 @@ Q(pow)
 
 Q(present)
 
+Q(present)
+
+Q(preview)
+
 Q(print)
 
-Q(range)
+Q(print_exception)
 
 Q(range)
 
 Q(range)
+
+Q(range)
+
+Q(read)
+
+Q(readinto)
+
+Q(readline)
 
 Q(remove)
 
@@ -869,13 +954,21 @@ Q(rstrip)
 
 Q(screen_height)
 
+Q(screen_height)
+
 Q(screen_width)
+
+Q(screen_width)
+
+Q(seek)
 
 Q(send)
 
 Q(send)
 
 Q(sep)
+
+Q(set_pixel)
 
 Q(set_pixel)
 
@@ -899,7 +992,15 @@ Q(str)
 
 Q(str)
 
+Q(str)
+
+Q(str)
+
 Q(strip)
+
+Q(struct)
+
+Q(struct)
 
 Q(sum)
 
@@ -908,6 +1009,12 @@ Q(super)
 Q(super)
 
 Q(super)
+
+Q(sys)
+
+Q(sys)
+
+Q(tell)
 
 Q(throw)
 
@@ -923,13 +1030,25 @@ Q(type)
 
 Q(type)
 
+Q(unpack)
+
+Q(unpack_from)
+
 Q(update)
 
 Q(upper)
 
+Q(usys)
+
 Q(value)
 
 Q(values)
+
+Q(version)
+
+Q(version_info)
+
+Q(write)
 
 Q(zip)
 
