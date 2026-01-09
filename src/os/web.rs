@@ -373,7 +373,7 @@ fn launch_http(
                 guard.ip.clone().unwrap_or_default(),
             )
         } else {
-            ("Cardputer-RustOS".to_string(), String::new())
+            ("Roxide".to_string(), String::new())
         };
         
         // Stream HTML from const parts (in Flash) - no heap allocation for the large parts
@@ -432,7 +432,6 @@ fn launch_http(
                         let command = match ext {
                             "bin" => Some(RemoteCommand::FlashBin(target)),
                             "wasm" => Some(RemoteCommand::RunLive(LiveAppKind::Wasm, target)),
-                            "py" | "mpy" => Some(RemoteCommand::RunLive(LiveAppKind::Python, target)),
                             _ => None,
                         };
                         if let Some(command) = command {
@@ -644,7 +643,7 @@ const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cardputer RustOS | Web UI</title>
+    <title>Roxide | Web UI</title>
     <style>
         :root {
             --bg-color: #f6f1e7;
@@ -873,7 +872,7 @@ const INDEX_HTML_PART1: &[u8] = br#"<!doctype html>
         <header>
             <div class="brand">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-                <h1>Cardputer OS</h1>
+                <h1>Roxide</h1>
             </div>
             <div class="info">
                 <span>SSID: <b>"#;
@@ -996,8 +995,7 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
             const lowerName = file.name.toLowerCase();
             const isBin = !file.is_dir && lowerName.endsWith('.bin');
             const isWasm = !file.is_dir && lowerName.endsWith('.wasm');
-            const isPy = !file.is_dir && (lowerName.endsWith('.py') || lowerName.endsWith('.mpy'));
-            const isLiveApp = isWasm || isPy;
+            const isLiveApp = isWasm;
             
             const icon = file.is_dir 
                 ? '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #fbbf24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>'

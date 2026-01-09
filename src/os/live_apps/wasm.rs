@@ -5,6 +5,12 @@ use std::path::PathBuf;
 use std::ptr;
 use std::time::Duration;
 
+use esp_idf_hal::delay::TickType;
+use esp_idf_hal::i2s::{I2sDriver, I2sTx};
+use esp_idf_hal::io::Write;
+use esp_idf_hal::sys::wifi_interface_t_WIFI_IF_STA;
+use esp_idf_svc::espnow::{EspNow, PeerInfo};
+
 use crate::keyboard::{key_code, key_event_code, Key, KeyEvent};
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
@@ -51,6 +57,19 @@ pub struct WasmApp {
     func_fb_ptr: IM3Function,
     func_fb_len: IM3Function,
     func_should_exit: Option<IM3Function>,
+    func_audio_ptr: Option<IM3Function>,
+    func_audio_len: Option<IM3Function>,
+    func_audio_clear: Option<IM3Function>,
+    func_net_out_ptr: Option<IM3Function>,
+    func_net_out_len: Option<IM3Function>,
+    func_net_out_clear: Option<IM3Function>,
+    func_net_peer_ptr: Option<IM3Function>,
+    func_net_peer_epoch: Option<IM3Function>,
+    speaker: Option<I2sDriver<'static, I2sTx>>,
+    speaker_enabled: bool,
+    espnow: Option<EspNow<'static>>,
+    peer_epoch: Option<i32>,
+    peer_addr: Option<[u8; 6]>,
 }
 
 impl WasmApp {
@@ -104,6 +123,14 @@ impl WasmApp {
         let func_fb_ptr = find_function(runtime, "app_framebuffer_ptr")?;
         let func_fb_len = find_function(runtime, "app_framebuffer_len")?;
         let func_should_exit = find_function(runtime, "app_should_exit").ok();
+        let func_audio_ptr = find_function(runtime, "app_audio_ptr").ok();
+        let func_audio_len = find_function(runtime, "app_audio_len").ok();
+        let func_audio_clear = find_function(runtime, "app_audio_clear").ok();
+        let func_net_out_ptr = find_function(runtime, "app_network_out_ptr").ok();
+        let func_net_out_len = find_function(runtime, "app_network_out_len").ok();
+        let func_net_out_clear = find_function(runtime, "app_network_out_clear").ok();
+        let func_net_peer_ptr = find_function(runtime, "app_network_peer_ptr").ok();
+        let func_net_peer_epoch = find_function(runtime, "app_network_peer_epoch").ok();
 
         let app = Self {
             env,
@@ -116,6 +143,19 @@ impl WasmApp {
             func_fb_ptr,
             func_fb_len,
             func_should_exit,
+            func_audio_ptr,
+            func_audio_len,
+            func_audio_clear,
+            func_net_out_ptr,
+            func_net_out_len,
+            func_net_out_clear,
+            func_net_peer_ptr,
+            func_net_peer_epoch,
+            speaker: None,
+            speaker_enabled: false,
+            espnow: None,
+            peer_epoch: None,
+            peer_addr: None,
         };
 
         if let Some(func) = app.func_init {
@@ -144,6 +184,16 @@ impl WasmApp {
             self.call_void(func, &[])?;
         }
 
+        let mut mem_size = 0u32;
+        let mem_ptr = unsafe { m3_GetMemory(self.runtime, &mut mem_size as *mut u32, 0) };
+        if mem_ptr.is_null() {
+            return Err(LiveAppError::RuntimeFailed("wasm memory missing".to_string()));
+        }
+
+        let mem_size = mem_size as usize;
+        self.handle_network(mem_ptr, mem_size)?;
+        self.handle_audio(mem_ptr, mem_size)?;
+
         if let Some(func) = self.func_should_exit {
             if self.call_i32(func)? != 0 {
                 return Ok(LiveAppOutcome::Exit);
@@ -163,14 +213,6 @@ impl WasmApp {
                 "framebuffer pointer unaligned".to_string(),
             ));
         }
-
-        let mut mem_size = 0u32;
-        let mem_ptr = unsafe { m3_GetMemory(self.runtime, &mut mem_size as *mut u32, 0) };
-        if mem_ptr.is_null() {
-            return Err(LiveAppError::RuntimeFailed("wasm memory missing".to_string()));
-        }
-
-        let mem_size = mem_size as usize;
         if fb_ptr + fb_len > mem_size {
             return Err(LiveAppError::RuntimeFailed(
                 "framebuffer out of bounds".to_string(),
@@ -196,6 +238,146 @@ impl WasmApp {
         buffers.send_framebuffer();
 
         Ok(LiveAppOutcome::Continue)
+    }
+
+    pub fn into_speaker(mut self) -> Option<I2sDriver<'static, I2sTx>> {
+        self.speaker.take()
+    }
+
+    pub fn attach_speaker(&mut self, speaker: I2sDriver<'static, I2sTx>) {
+        self.speaker = Some(speaker);
+    }
+
+    fn handle_audio(&mut self, mem_ptr: *mut u8, mem_size: usize) -> Result<(), LiveAppError> {
+        let (Some(func_ptr), Some(func_len)) = (self.func_audio_ptr, self.func_audio_len) else {
+            return Ok(());
+        };
+
+        let len = self.call_i32(func_len)?;
+        if len <= 0 {
+            return Ok(());
+        }
+        let ptr = self.call_i32(func_ptr)?;
+        if ptr < 0 {
+            return Err(LiveAppError::RuntimeFailed(
+                "audio pointer out of bounds".to_string(),
+            ));
+        }
+        let len = len as usize;
+        let ptr = ptr as usize;
+        if ptr + len > mem_size {
+            return Err(LiveAppError::RuntimeFailed(
+                "audio buffer out of bounds".to_string(),
+            ));
+        }
+
+        let data = unsafe { std::slice::from_raw_parts(mem_ptr.add(ptr) as *const u8, len) };
+
+        if let Some(speaker) = self.speaker.as_mut() {
+            if !self.speaker_enabled {
+                speaker
+                    .tx_enable()
+                    .map_err(|err| LiveAppError::RuntimeFailed(format!("speaker enable failed: {}", err)))?;
+                self.speaker_enabled = true;
+            }
+            let timeout = TickType::new_millis(1000).into();
+            speaker
+                .write_all(data, timeout)
+                .map_err(|err| LiveAppError::RuntimeFailed(format!("audio write failed: {}", err)))?;
+        }
+
+        if let Some(func_clear) = self.func_audio_clear {
+            self.call_void(func_clear, &[])?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_network(&mut self, mem_ptr: *mut u8, mem_size: usize) -> Result<(), LiveAppError> {
+        if let (Some(func_peer_ptr), Some(func_peer_epoch)) =
+            (self.func_net_peer_ptr, self.func_net_peer_epoch)
+        {
+            let epoch = self.call_i32(func_peer_epoch)?;
+            if epoch > 0 && self.peer_epoch != Some(epoch) {
+                let ptr = self.call_i32(func_peer_ptr)?;
+                if ptr < 0 {
+                    return Err(LiveAppError::RuntimeFailed(
+                        "peer pointer out of bounds".to_string(),
+                    ));
+                }
+                let ptr = ptr as usize;
+                if ptr + 6 > mem_size {
+                    return Err(LiveAppError::RuntimeFailed(
+                        "peer buffer out of bounds".to_string(),
+                    ));
+                }
+                let mut addr = [0u8; 6];
+                let src =
+                    unsafe { std::slice::from_raw_parts(mem_ptr.add(ptr) as *const u8, 6) };
+                addr.copy_from_slice(src);
+                self.peer_epoch = Some(epoch);
+                self.peer_addr = Some(addr);
+                self.ensure_espnow()?;
+                if let Some(espnow) = self.espnow.as_ref() {
+                    let peer_info = PeerInfo {
+                        peer_addr: addr,
+                        channel: 0,
+                        ifidx: wifi_interface_t_WIFI_IF_STA,
+                        ..Default::default()
+                    };
+                    let _ = espnow.add_peer(peer_info);
+                }
+            }
+        }
+
+        let (Some(func_out_ptr), Some(func_out_len)) =
+            (self.func_net_out_ptr, self.func_net_out_len)
+        else {
+            return Ok(());
+        };
+        let out_len = self.call_i32(func_out_len)?;
+        if out_len <= 0 {
+            return Ok(());
+        }
+        let out_ptr = self.call_i32(func_out_ptr)?;
+        if out_ptr < 0 {
+            return Err(LiveAppError::RuntimeFailed(
+                "network pointer out of bounds".to_string(),
+            ));
+        }
+        let out_len = out_len as usize;
+        let out_ptr = out_ptr as usize;
+        if out_ptr + out_len > mem_size {
+            return Err(LiveAppError::RuntimeFailed(
+                "network buffer out of bounds".to_string(),
+            ));
+        }
+
+        let payload =
+            unsafe { std::slice::from_raw_parts(mem_ptr.add(out_ptr) as *const u8, out_len) };
+        if let Some(peer) = self.peer_addr {
+            self.ensure_espnow()?;
+            if let Some(espnow) = self.espnow.as_ref() {
+                espnow.send(peer, payload).map_err(|err| {
+                    LiveAppError::RuntimeFailed(format!("espnow send failed: {}", err))
+                })?;
+            }
+            if let Some(func_clear) = self.func_net_out_clear {
+                self.call_void(func_clear, &[])?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_espnow(&mut self) -> Result<(), LiveAppError> {
+        if self.espnow.is_some() {
+            return Ok(());
+        }
+        let espnow = EspNow::take()
+            .map_err(|err| LiveAppError::RuntimeFailed(format!("espnow init failed: {}", err)))?;
+        self.espnow = Some(espnow);
+        Ok(())
     }
 
     fn call_void(&self, func: IM3Function, args: &[i32]) -> Result<(), LiveAppError> {

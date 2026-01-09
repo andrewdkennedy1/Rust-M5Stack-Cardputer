@@ -5,16 +5,13 @@ use crate::keyboard::{CardputerKeyboard, Key, KeyEvent};
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-mod python;
 mod wasm;
 
-use python::PythonApp;
 use wasm::WasmApp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiveAppKind {
     Wasm,
-    Python,
 }
 
 #[derive(Debug)]
@@ -35,14 +32,12 @@ pub struct LiveAppRunner {
 
 enum LiveAppState {
     Wasm(WasmApp),
-    Python(PythonApp),
 }
 
 impl LiveAppState {
     fn teardown(self) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
         match self {
-            LiveAppState::Wasm(_) => None,
-            LiveAppState::Python(app) => app.teardown(),
+            LiveAppState::Wasm(app) => app.into_speaker(),
         }
     }
 }
@@ -54,8 +49,11 @@ impl LiveAppRunner {
         speaker: esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>,
     ) -> Result<Self, LiveAppError> {
         let app = match kind {
-            LiveAppKind::Wasm => LiveAppState::Wasm(WasmApp::load(path)?),
-            LiveAppKind::Python => LiveAppState::Python(PythonApp::load(path, speaker)?),
+            LiveAppKind::Wasm => {
+                let mut app = WasmApp::load(path)?;
+                app.attach_speaker(speaker);
+                LiveAppState::Wasm(app)
+            }
         };
 
         Ok(Self {
@@ -82,7 +80,6 @@ impl LiveAppRunner {
 
         match &mut self.app {
             LiveAppState::Wasm(app) => app.tick(buffers, input, dt),
-            LiveAppState::Python(app) => app.tick(buffers, input, dt),
         }
     }
 

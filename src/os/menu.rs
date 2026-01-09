@@ -216,7 +216,6 @@ fn live_app_kind_for_path(path: &Path) -> Option<LiveAppKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "wasm" => Some(LiveAppKind::Wasm),
-        "py" | "mpy" => Some(LiveAppKind::Python),
         _ => None,
     }
 }

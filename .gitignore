@@ -2,9 +2,11 @@
 /.embuild
 /target
 /Cargo.lock
+/wasm_apps/target/
 temp_espflash/espflash.exe
 temp_espflash/espflash.zip
-temp_espup/espup.exe
-temp_espup/espup.zip
+/temp_espup/
 build_log.txt
+docker_log.txt
+stderr_log.txt
 /components/micropython_embed/build-embed/

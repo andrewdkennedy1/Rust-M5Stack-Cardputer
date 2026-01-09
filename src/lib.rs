@@ -5,8 +5,6 @@ pub mod hotkeys;
 pub mod keyboard;
 pub mod loader;
 pub mod os;
-pub mod run_request;
-pub mod runner;
 pub mod runtime;
 pub mod swapchain;
 pub mod terminal;

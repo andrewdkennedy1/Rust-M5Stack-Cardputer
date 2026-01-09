@@ -87,6 +87,7 @@ class AutoMonitor:
 class FlasherGUI:
     def __init__(self, root):
         self.root = root
+        self.repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.root.title("CARDPUTER COMMAND CENTER v3")
         self.root.geometry("1200x900")
         self.root.configure(bg=COLORS["bg"])
@@ -106,7 +107,7 @@ class FlasherGUI:
         self.update_ports()
 
     def find_espflash(self):
-        local_path = os.path.abspath("temp_espflash/espflash.exe")
+        local_path = os.path.join(self.repo_root, "temp_espflash", "espflash.exe")
         if os.path.exists(local_path):
             return local_path
         return "espflash"
@@ -139,7 +140,7 @@ class FlasherGUI:
 
         # --- Section: Target Selection ---
         target_frame = self.create_section(left_panel, "DEPLOYMENT")
-        targets = ["loader", "graphics", "python_runner", "rink", "sound", "espnow_remote"]
+        targets = ["loader", "graphics", "rink", "sound", "espnow_remote"]
         self.combo_target = ctk.CTkComboBox(target_frame, values=targets, width=280) if ctk else ttk.Combobox(target_frame, values=targets, width=25)
         self.combo_target.pack(padx=10, pady=10)
         self.combo_target.set("loader")
@@ -151,6 +152,21 @@ class FlasherGUI:
         btn_flash = ctk.CTkButton(target_frame, text="FLASH TO DEVICE", fg_color=COLORS["success"], text_color="#000", command=self.on_flash) if ctk else \
                     tk.Button(target_frame, text="FLASH", command=self.on_flash)
         btn_flash.pack(fill=tk.X, padx=10, pady=5)
+
+        # --- Section: Build Tools ---
+        tools_frame = self.create_section(left_panel, "BUILD TOOLS")
+        btn_clean_idf = ctk.CTkButton(
+            tools_frame,
+            text="CLEAR ESP-IDF BUILD CACHE",
+            fg_color="#333",
+            text_color=COLORS["warning"],
+            command=self.on_clean_idf_cache,
+        ) if ctk else tk.Button(
+            tools_frame,
+            text="CLEAR ESP-IDF CACHE",
+            command=self.on_clean_idf_cache,
+        )
+        btn_clean_idf.pack(fill=tk.X, padx=10, pady=5)
 
         # --- Section: Device Control ---
         ctrl_frame = self.create_section(left_panel, "HARDWARE CONTROL")
@@ -277,11 +293,26 @@ class FlasherGUI:
         target = self.combo_target.get()
         threading.Thread(target=self._build_task, args=(target,), daemon=True).start()
 
+    def on_clean_idf_cache(self):
+        if not messagebox.askyesno(
+            "CLEAR ESP-IDF BUILD CACHE",
+            "This clears the ESP-IDF build cache inside the builder container.\n"
+            "The next build will take longer. Continue?",
+        ):
+            return
+        threading.Thread(target=self._clean_idf_cache_task, daemon=True).start()
+
     def _build_task(self, target):
         self.log(f"\n[BUILD] Using Persistent Docker Container for: {target}")
         
         # 1. Ensure container is running
-        check = subprocess.run("docker compose ps -q builder", shell=True, capture_output=True, text=True)
+        check = subprocess.run(
+            "docker compose ps -q builder",
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=self.repo_root,
+        )
         if not check.stdout.strip():
              self.log("[INFO] Starting Docker container (this may take a moment)...")
              if self.run_command(["docker", "compose", "up", "-d", "--build"]) != 0:
@@ -291,6 +322,33 @@ class FlasherGUI:
         # 2. Run build script inside container
         self.log("[INFO] Running incremental build inside container...")
         self.run_command(["docker", "compose", "exec", "-T", "builder", "bash", "scripts/internal_build.sh"])
+
+    def _clean_idf_cache_task(self):
+        self.log("\n[TOOLS] Clearing ESP-IDF build cache inside container...")
+
+        check = subprocess.run(
+            "docker compose ps -q builder",
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=self.repo_root,
+        )
+        if not check.stdout.strip():
+            self.log("[INFO] Starting Docker container (this may take a moment)...")
+            if self.run_command(["docker", "compose", "up", "-d", "--build"]) != 0:
+                self.log("[ERROR] Failed to start container")
+                return
+
+        self.run_command([
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "builder",
+            "bash",
+            "-lc",
+            "rm -rf /cache/target/xtensa-esp32s3-espidf/fast/build/esp-idf-sys-*",
+        ])
 
     def on_flash(self):
         target = self.combo_target.get()
@@ -350,20 +408,48 @@ class FlasherGUI:
         # We now copy the binary to target/loader/loader (or just target/bin_name if generalized)
         # Check specific exfiltrated path first
         paths = [
-            f"target/{bin_name}/{bin_name}", # New structure from internal_build.sh
-            f"target/{bin_name}",            # Fallback
-            f"target/xtensa-esp32s3-espidf/release/{bin_name}" # Old structure
+            os.path.join(self.repo_root, "target", bin_name, bin_name), # New structure from internal_build.sh
+            os.path.join(self.repo_root, "target", bin_name),           # Fallback
+            os.path.join(
+                self.repo_root,
+                "target",
+                "xtensa-esp32s3-espidf",
+                "release",
+                bin_name,
+            ), # Old structure
         ]
         for p in paths:
             if os.path.exists(p): return p
         return None
 
-    def run_command(self, cmd_list):
+    def run_command(self, cmd_list, cwd=None):
         self.log(f"RUN: {' '.join(cmd_list)}")
-        process = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', shell=True)
-        for line in process.stdout:
-            self.log(line.strip())
-        process.wait()
+        process = subprocess.Popen(
+            cmd_list,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding='utf-8',
+            errors='replace',
+            shell=False,
+            cwd=cwd or self.repo_root,
+        )
+        if not process.stdout:
+            return process.wait()
+
+        buffer = ""
+        while True:
+            chunk = process.stdout.read(1)
+            if chunk == "" and process.poll() is not None:
+                if buffer:
+                    self.log(buffer.strip())
+                break
+            if chunk in ("\n", "\r"):
+                if buffer:
+                    self.log(buffer.strip())
+                    buffer = ""
+                continue
+            buffer += chunk
+
         return process.returncode
 
 if __name__ == "__main__":

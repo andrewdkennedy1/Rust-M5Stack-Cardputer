@@ -10,6 +10,13 @@ rust-version = "1.71"
 opt-level = 3
 lto = true
 
+[profile.fast]
+inherits = "dev"
+opt-level = 0
+debug = true
+incremental = true
+codegen-units = 64
+
 
 [profile.dev]
 debug = true    # Symbols are nice and they don't increase the size on Flash
@@ -51,7 +58,7 @@ embuild = "0.33"
 [package.metadata.esp-idf-sys]
 
 [[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/usb_shim", "components/wasm3", "components/micropython_embed"]
+component_dirs = ["components/usb_shim", "components/wasm3"]
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_tinyusb", version = "1.2" }

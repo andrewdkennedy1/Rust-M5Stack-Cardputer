@@ -1,19 +1,20 @@
-# Cardputer RustOS
+# Roxide
 
-Cardputer RustOS turns this repo into a self-hosted launcher for the M5Stack Cardputer. The loader stays resident on the factory partition while user apps live in OTA slots and on the SD card, giving you a menu-driven experience instead of flashing one-off binaries.
+Roxide turns this repo into a self-hosted launcher for the M5Stack Cardputer. The loader stays resident on the factory partition while user apps live in OTA slots and on the SD card, giving you a menu-driven experience instead of flashing one-off binaries.
 
-## Why RustOS?
+## Why Roxide?
 - **Chain-load everything:** Keep the main slot for the OS and flash OTA partitions on-demand from binaries stored on `/sdcard/apps`.
 - **Menu-first UX:** Boot straight into the launcher and return there on reset for a handheld-OS feel.
 - **SD-friendly:** Drop `.bin` artifacts on the SD card and run them without reflashing your base image.
 - **Modular Rust:** Display, keyboard, swapchain, and SD abstractions stay in dedicated modules for reuse across apps.
 
 ## Project layout
-- `src/os/` – Cardputer RustOS runtime (menu, status UI, chainloader, and app metadata).
+- `src/os/` – Roxide runtime (menu, status UI, chainloader, and app metadata).
 - `src/loader.rs` – Thin shim that exposes `cardputer::os::boot()` for backwards-compatible entrypoints.
 - `src/bin/loader.rs` – Binary target that boots the OS loader.
 - `src/hal.rs`, `src/display_driver.rs`, `src/keyboard.rs`, `src/swapchain.rs` – Hardware abstractions and framebuffer plumbing.
-- `src/bin/` – Sample apps (graphics demo, rink terminal, sound, ESP-NOW remote, etc.).
+- `src/bin/` – OS loader and native entrypoints.
+- `wasm_apps/` – WASM live app demos (3D graphics, rink-lite, sound, ESP-NOW remote).
 
 ## Building
 1. Install the ESP-IDF Rust toolchain as described in the [esp-rs book](https://esp-rs.github.io/book/installation/riscv-and-xtensa.html).
@@ -31,13 +32,14 @@ Place your app binaries on the SD card under `/sdcard/apps` (you can use nested 
 /sdcard
   /apps
     /demos
-      cube.bin
+      demo_3d.wasm
+      demo_rink.wasm
     weather.bin
 ```
-The launcher ignores hidden files and only shows `.bin` entries.
+The launcher ignores hidden files and only shows `.bin` and `.wasm` entries.
 
 ## How it Works
-RustOS uses the ESP32-S3's partition system to provide a reliable handheld experience:
+Roxide uses the ESP32-S3's partition system to provide a reliable handheld experience:
 - **Factory Partition**: Occupied by the **OS Loader**. This is your "Home" partition.
 - **OTA Partitions**: Two 2MB slots (`ota_0`, `ota_1`) used for running apps.
 - **Boot Flow**: The OS scans your SD card, let's you pick a `.bin`, and flashes it into the next OTA slot. It then sets that slot as the default boot target and reboots.
@@ -59,16 +61,8 @@ If an application crashes, freezes, or refuses to return to the OS:
 ## Developing apps
 - Add a new binary in `src/bin/<name>.rs` to bundle it with the OS firmware.
 - Or build standalone firmware and copy the resulting `.bin` to the SD card so the loader can flash it into an OTA slot.
+- For live apps, compile to `wasm32-unknown-unknown` and copy the `.wasm` to the SD card (see `docs/live_apps.md` and `wasm_apps/README.md`).
 - Reuse the hardware helpers in `cardputer::hal`, `cardputer::display_driver`, `cardputer::keyboard`, and `cardputer::swapchain` to keep your apps lean.
-
-## Python runner (for `.py`/`.mpy`)
-Running Python apps uses a dedicated runner image to keep heap usage low.
-1. Build the runner image:
-   - Linux/macOS: `scripts/build_python_runner.sh`
-   - Windows: `scripts/build_python_runner.bat`
-2. Upload `dist/python_runner.bin` to `/sdcard/cardputer/python_runner.bin` (via the web UI upload).
-   - Legacy path `/sdcard/.cardputer/python_runner.bin` is also accepted.
-3. Launch `.py` or `.mpy` from the menu; it will reboot into the runner and return to the OS when the script exits.
 
 ## Credits
 - Based on the community efforts around the M5Stack Cardputer and `esp-idf-hal`.

@@ -8,7 +8,7 @@ use crate::keyboard::{CardputerKeyboard, KeyEvent};
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::app::AppContext;
 use super::menu::{menu_path_display, MenuState};
@@ -34,7 +34,7 @@ pub fn render_menu(
     let _ = fbuf.clear(Rgb565::BLACK);
 
     let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-    Text::new("Cardputer RustOS", Point::new(2, 10), title_style)
+    Text::new("Roxide", Point::new(2, 10), title_style)
         .draw(fbuf)
         .ok();
 
@@ -178,6 +178,61 @@ pub fn render_status<T: AsRef<str>>(
     }
 
     buffers.send_framebuffer();
+}
+
+pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>) {
+    let start = Instant::now();
+    let duration = Duration::from_millis(900);
+    // Precomputed ring offsets to avoid trig on boot.
+    let ring: [(i32, i32); 8] = [
+        (0, -18),
+        (12, -12),
+        (18, 0),
+        (12, 12),
+        (0, 18),
+        (-12, 12),
+        (-18, 0),
+        (-12, -12),
+    ];
+    let center_x = (SCREEN_WIDTH as i32) / 2;
+    let center_y = (SCREEN_HEIGHT as i32) / 2 - 6;
+
+    while start.elapsed() < duration {
+        let elapsed = start.elapsed();
+        let phase = ((elapsed.as_millis() / 90) % ring.len() as u128) as usize;
+        let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).min(1.0);
+
+        let fbuf = buffers.swap_framebuffer();
+        let _ = fbuf.clear(Rgb565::BLACK);
+
+        for (idx, (dx, dy)) in ring.iter().enumerate() {
+            let color = if idx == phase {
+                Rgb565::CSS_CYAN
+            } else {
+                Rgb565::new(2, 10, 10)
+            };
+            let size = if idx == phase { 6 } else { 4 };
+            let rect = Rectangle::new(
+                Point::new(center_x + dx - size / 2, center_y + dy - size / 2),
+                Size::new(size as u32, size as u32),
+            )
+            .into_styled(PrimitiveStyle::with_fill(color));
+            rect.draw(fbuf).ok();
+        }
+
+        let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+        Text::new("Roxide", Point::new(center_x - 24, center_y + 20), title_style)
+            .draw(fbuf)
+            .ok();
+
+        let bar_width = ((SCREEN_WIDTH as f32 - 40.0) * progress) as u32;
+        let bar = Rectangle::new(Point::new(20, center_y + 34), Size::new(bar_width, 3))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_CYAN));
+        bar.draw(fbuf).ok();
+
+        buffers.send_framebuffer();
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 fn render_progress_bar(

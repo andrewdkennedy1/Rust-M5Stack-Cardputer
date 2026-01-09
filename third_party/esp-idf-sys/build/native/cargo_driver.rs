@@ -617,13 +617,15 @@ pub fn build() -> Result<EspIdfBuildOutput> {
     }
 
     let sdkconfig_json = path_buf![&cmake_build_dir, "config", "sdkconfig.json"];
+    let mut link_args_builder = build::LinkArgsBuilder::try_from(&target.link.unwrap())?;
+    link_args_builder.linkflags =
+        absolutize_link_args(link_args_builder.linkflags, &cmake_build_dir);
+
     let build_output = EspIdfBuildOutput {
         cincl_args: build::CInclArgs::try_from(&target.compile_groups[0])?,
         link_args: Some(
-            build::LinkArgsBuilder::try_from(&target.link.unwrap())?
+            link_args_builder
                 .linker(custom_linker.as_ref().unwrap_or(&compiler))
-                .working_directory(&cmake_build_dir)
-                .force_ldproxy(true)
                 .build()?,
         ),
         bindgen: bindgen::Factory::from_cmake(&target.compile_groups[0])?.with_linker(&compiler),
@@ -668,6 +670,71 @@ fn generate_sdkconfig_defaults() -> Result<String> {
             writeln!(out, "{}={}", s, if i == opt_index { 'y' } else { 'n' }).unwrap();
             out
         }))
+}
+
+// Convert relative linker paths to absolute so we don't depend on ldproxy's CWD.
+fn absolutize_link_args(args: Vec<String>, cmake_build_dir: &Path) -> Vec<String> {
+    let mut result = Vec::with_capacity(args.len());
+    let mut iter = args.into_iter();
+
+    while let Some(arg) = iter.next() {
+        if arg == "-T" || arg == "-L" {
+            if let Some(next) = iter.next() {
+                result.push(arg);
+                result.push(absolutize_path_arg(&next, cmake_build_dir));
+                continue;
+            }
+        }
+
+        if let Some(rest) = arg.strip_prefix("-T") {
+            if !rest.is_empty() {
+                result.push(format!(
+                    "-T{}",
+                    absolutize_path_arg(rest, cmake_build_dir)
+                ));
+                continue;
+            }
+        }
+
+        if let Some(rest) = arg.strip_prefix("-L") {
+            if !rest.is_empty() {
+                result.push(format!(
+                    "-L{}",
+                    absolutize_path_arg(rest, cmake_build_dir)
+                ));
+                continue;
+            }
+        }
+
+        result.push(absolutize_path_arg(&arg, cmake_build_dir));
+    }
+
+    result
+}
+
+fn absolutize_path_arg(arg: &str, cmake_build_dir: &Path) -> String {
+    if should_absolutize_path(arg, cmake_build_dir) {
+        cmake_build_dir.join(arg).to_string_lossy().to_string()
+    } else {
+        arg.to_string()
+    }
+}
+
+fn should_absolutize_path(arg: &str, cmake_build_dir: &Path) -> bool {
+    if arg.is_empty() || arg.starts_with('@') || arg.starts_with('-') {
+        return false;
+    }
+
+    let path = Path::new(arg);
+    if path.is_absolute() {
+        return false;
+    }
+
+    if arg.contains('/') || arg.contains('\\') {
+        return true;
+    }
+
+    cmake_build_dir.join(arg).exists()
 }
 
 /// Create a cmake list (`;`-separated strings), escape all `;` and on Windows make sure

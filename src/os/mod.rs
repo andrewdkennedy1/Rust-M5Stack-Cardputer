@@ -3,7 +3,6 @@ pub mod chainload;
 pub mod control;
 pub mod live_apps;
 pub mod menu;
-pub mod python_runner;
 pub mod status;
 pub mod storage;
 pub mod ui;
@@ -22,7 +21,7 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use app::{AppContext, AppLaunch};
 use chainload::ota_partition_available;
 use control::RemoteCommand;
-use live_apps::{LiveAppKind, LiveAppOutcome, LiveAppRunner};
+use live_apps::{LiveAppOutcome, LiveAppRunner};
 use menu::{MenuAction, MenuItem, MenuState};
 use status::{BatteryGauge, StatusProvider};
 use ui::{render_menu, render_status, show_message_and_wait};
@@ -96,7 +95,6 @@ fn warn_usb_storage_active(
 
 struct WebPause {
     paused: bool,
-    live: bool,
     usb: bool,
 }
 
@@ -104,14 +102,8 @@ impl WebPause {
     fn new() -> Self {
         Self {
             paused: false,
-            live: false,
             usb: false,
         }
-    }
-
-    fn set_live(&mut self, web: &web::WebHandle, paused: bool) {
-        self.live = paused;
-        self.sync(web);
     }
 
     fn set_usb(&mut self, web: &web::WebHandle, paused: bool) {
@@ -120,7 +112,7 @@ impl WebPause {
     }
 
     fn sync(&mut self, web: &web::WebHandle) {
-        let should_pause = self.live || self.usb;
+        let should_pause = self.usb;
         if should_pause && !self.paused {
             web.pause();
             self.paused = true;
@@ -131,7 +123,7 @@ impl WebPause {
     }
 }
 
-/// Boot entry point for Cardputer-RustOS.
+/// Boot entry point for Roxide.
 pub fn boot() -> ! {
     runtime::init();
     unsafe {
@@ -154,12 +146,8 @@ pub fn boot() -> ! {
     let mut buffers = OwnedDoubleBuffer::<SCREEN_WIDTH, SCREEN_HEIGHT>::new();
     buffers.start_thread(display);
 
-    render_status(
-        &mut buffers,
-        "Cardputer RustOS",
-        &["Starting..."],
-        None,
-    );
+    ui::render_boot_animation(&mut buffers);
+    render_status(&mut buffers, "Roxide", &["Starting..."], None);
 
     let mut sd: Option<crate::fs::SdCard> = None;
     let mut sd_ready = false;
@@ -211,7 +199,6 @@ pub fn boot() -> ! {
             .unwrap_or(false);
 
         if live_app.is_some() {
-            web_pause.set_live(&web_handle, true);
             let mut injected_key = None;
             if let Some(command) = control_rx.try_recv().ok() {
                 match command {
@@ -228,11 +215,6 @@ pub fn boot() -> ! {
                     RemoteCommand::RunLive(kind, path) => {
                         if usb_active {
                             warn_usb_storage_active(&mut buffers, &mut keyboard);
-                        } else if matches!(kind, LiveAppKind::Python) {
-                            python_runner::launch_python_runner(&mut buffers, &mut keyboard, &path);
-                            live_app = None;
-                            web_pause.set_live(&web_handle, false);
-                            menu_needs_refresh = true;
                         } else {
                             menu.release_memory();
                             menu_needs_refresh = true;
@@ -251,7 +233,6 @@ pub fn boot() -> ! {
                                         // TODO put speaker back? 
                                         // match err { LiveAppError::LoadFailed(_) => ... }
                                         live_app = None;
-                                        web_pause.set_live(&web_handle, false);
                                         menu_needs_refresh = true;
                                     }
                                 }
@@ -287,7 +268,6 @@ pub fn boot() -> ! {
                         if let Some(app) = live_app.take() {
                             speaker = app.teardown();
                         }
-                        web_pause.set_live(&web_handle, false);
                         menu_needs_refresh = true;
                     }
                 }
@@ -297,7 +277,6 @@ pub fn boot() -> ! {
             continue;
         }
 
-        web_pause.set_live(&web_handle, false);
         if menu_needs_refresh {
             refresh_menu_or_warn(
                 &mut menu,
@@ -433,16 +412,7 @@ pub fn boot() -> ! {
                                     } else {
                                         menu.release_memory();
                                         menu_needs_refresh = true;
-                                        web_pause.set_live(&web_handle, true);
-                                        if matches!(kind, LiveAppKind::Python) {
-                                            python_runner::launch_python_runner(
-                                                &mut buffers,
-                                                &mut keyboard,
-                                                &path,
-                                            );
-                                            web_pause.set_live(&web_handle, false);
-                                            menu_needs_refresh = true;
-                                        } else if let Some(s) = speaker.take() {
+                                        if let Some(s) = speaker.take() {
                                             match LiveAppRunner::load(kind, path, s) {
                                                 Ok(app) => {
                                                     live_app = Some(app);
@@ -454,7 +424,6 @@ pub fn boot() -> ! {
                                                         "App Error",
                                                         &[format!("{:?}", err)],
                                                     );
-                                                    web_pause.set_live(&web_handle, false);
                                                     menu_needs_refresh = true;
                                                 }
                                             }
@@ -468,15 +437,9 @@ pub fn boot() -> ! {
                 RemoteCommand::RunLive(kind, path) => {
                     if usb_active {
                         warn_usb_storage_active(&mut buffers, &mut keyboard);
-                    } else if matches!(kind, LiveAppKind::Python) {
-                        web_pause.set_live(&web_handle, true);
-                        python_runner::launch_python_runner(&mut buffers, &mut keyboard, &path);
-                        web_pause.set_live(&web_handle, false);
-                        menu_needs_refresh = true;
                     } else {
                         menu.release_memory();
                         menu_needs_refresh = true;
-                        web_pause.set_live(&web_handle, true);
                         if let Some(s) = speaker.take() {
                             match LiveAppRunner::load(kind, path, s) {
                                 Ok(app) => {
@@ -489,7 +452,6 @@ pub fn boot() -> ! {
                                         "App Error",
                                         &[format!("{:?}", err)],
                                     );
-                                    web_pause.set_live(&web_handle, false);
                                     menu_needs_refresh = true;
                                 }
                             }

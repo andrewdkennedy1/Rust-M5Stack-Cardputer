@@ -1,0 +1,10 @@
+[package]
+name = "roxide-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+font8x8 = { version = "0.3", default-features = false }
