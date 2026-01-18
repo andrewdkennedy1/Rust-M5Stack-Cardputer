@@ -4,8 +4,7 @@ use std::io::Read;
 use std::time::Duration;
 
 use cardputer::{
-    hotkeys,
-    keyboard,
+    hotkeys, keyboard,
     os::{chainload, storage, ui},
     runtime,
     swapchain::OwnedDoubleBuffer,
@@ -143,19 +142,18 @@ fn parse_stl_ascii(bytes: &[u8]) -> Option<StlData> {
     Some(StlData { vertices, faces })
 }
 
-
 fn load_stl_from_path(path: &str, default_geometry: &Geometry<'_>) -> StlData {
     if let Ok(mut file) = File::open(path) {
         let mut buffer = Vec::new();
         if file.read_to_end(&mut buffer).is_ok() {
             if let Some(data) = parse_stl(&buffer) {
-                 info!("Loaded STL from {}", path);
-                 return data;
+                info!("Loaded STL from {}", path);
+                return data;
             }
         }
     }
     info!("Using embedded STL for {}", path);
-    
+
     // We need to copy default geometry into Owned StlData
     StlData {
         vertices: default_geometry.vertices.to_vec(),
@@ -358,7 +356,6 @@ fn main() {
                 _ => {}
             }
         }
-
 
         engine.camera.set_position(player_pos);
 

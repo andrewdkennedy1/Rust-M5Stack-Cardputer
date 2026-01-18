@@ -120,13 +120,7 @@ pub fn start_wifi_file_server(
     let spawn_result = thread::Builder::new()
         .stack_size(WIFI_THREAD_STACK_BYTES)
         .spawn(move || {
-            if let Err(err) = wifi_thread(
-                modem,
-                sd_root,
-                state_thread,
-                control_tx,
-                command_rx,
-            ) {
+            if let Err(err) = wifi_thread(modem, sd_root, state_thread, control_tx, command_rx) {
                 error!("WiFi file server failed: {:?}", err);
             }
         });
@@ -139,10 +133,7 @@ pub fn start_wifi_file_server(
         }
     }
 
-    WebHandle {
-        state,
-        command_tx,
-    }
+    WebHandle { state, command_tx }
 }
 
 type ServerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -295,11 +286,7 @@ fn bringup_wifi_and_server(
 
     info!("WiFi connected to {}", config.ssid);
 
-    match launch_http(
-        sd_root.clone(),
-        state.clone(),
-        control_tx,
-    ) {
+    match launch_http(sd_root.clone(), state.clone(), control_tx) {
         Ok(server) => Some(server),
         Err(err) => {
             error!("HTTP server failed: {:?}", err);
@@ -364,18 +351,17 @@ fn launch_http(
 
     let index_state = state.clone();
     server.fn_handler("/", Method::Get, move |req| {
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
         // Get dynamic values (small allocations)
         let (ssid, ip) = if let Ok(guard) = index_state.lock() {
-            (
-                guard.ssid.clone(),
-                guard.ip.clone().unwrap_or_default(),
-            )
+            (guard.ssid.clone(), guard.ip.clone().unwrap_or_default())
         } else {
             ("Roxide".to_string(), String::new())
         };
-        
+
         // Stream HTML from const parts (in Flash) - no heap allocation for the large parts
         if !try_write_response(&mut resp, INDEX_HTML_PART1) {
             return Ok(());
@@ -392,7 +378,7 @@ fn launch_http(
         if !try_write_response(&mut resp, INDEX_HTML_PART3) {
             return Ok(());
         }
-        
+
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
@@ -400,7 +386,9 @@ fn launch_http(
     let launch_tx = control_tx.clone();
     server.fn_handler("/api/control", Method::Post, move |req| {
         let uri = req.uri().to_string();
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if let Some(action) = parse_control_action(&uri) {
             let _ = control_tx.send(RemoteCommand::Menu(action));
             if !try_write_response(&mut resp, b"OK") {
@@ -417,7 +405,9 @@ fn launch_http(
     let launch_root = sd_root.clone();
     server.fn_handler("/api/launch", Method::Post, move |req| {
         let uri = req.uri().to_string();
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if let Some(ref root) = launch_root {
             if let Some(pos) = uri.find("path=") {
                 let p = &uri[pos + 5..];
@@ -431,7 +421,6 @@ fn launch_http(
                     if let Some(ext) = ext.as_deref() {
                         let command = match ext {
                             "bin" => Some(RemoteCommand::FlashBin(target)),
-                            "wasm" => Some(RemoteCommand::RunLive(LiveAppKind::Wasm, target)),
                             _ => None,
                         };
                         if let Some(command) = command {
@@ -458,12 +447,14 @@ fn launch_http(
     let list_root = sd_root.clone();
     server.fn_handler("/api/files", Method::Get, move |req| {
         let uri = req.uri().to_string();
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
         if let Some(ref root) = list_root {
             // Very basic query param parsing for ?path=
             let subpath = if let Some(pos) = uri.find("path=") {
-                let p = &uri[pos+5..];
+                let p = &uri[pos + 5..];
                 // Decode %2F to / (basic)
                 p.replace("%2F", "/").replace("%2f", "/")
             } else {
@@ -478,10 +469,10 @@ fn launch_http(
 
             // Safety check: ensure target is within root
             if !target.starts_with(root) {
-                 if !try_write_response(&mut resp, b"[]") {
-                     return Ok(());
-                 }
-                 return Ok(());
+                if !try_write_response(&mut resp, b"[]") {
+                    return Ok(());
+                }
+                return Ok(());
             }
 
             let mut entries = Vec::new();
@@ -512,10 +503,12 @@ fn launch_http(
     let delete_root = sd_root.clone();
     server.fn_handler("/api/delete", Method::Post, move |req| {
         let uri = req.uri().to_string();
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if let Some(ref root) = delete_root {
             if let Some(pos) = uri.find("path=") {
-                let p = &uri[pos+5..];
+                let p = &uri[pos + 5..];
                 let subpath = p.replace("%2F", "/").replace("%2f", "/");
                 let target = root.join(subpath.trim_start_matches('/'));
                 if target.starts_with(root) && target != *root {
@@ -541,16 +534,23 @@ fn launch_http(
         let uri = req.uri().to_string();
         if let Some(ref root) = download_root {
             if let Some(pos) = uri.find("path=") {
-                let p = &uri[pos+5..];
+                let p = &uri[pos + 5..];
                 let subpath = p.replace("%2F", "/").replace("%2f", "/");
                 let target = root.join(subpath.trim_start_matches('/'));
                 if target.starts_with(root) && target.is_file() {
-                    let mut file = File::open(&target).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                    let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                    let mut file = File::open(&target)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                    let mut resp = req
+                        .into_ok_response()
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                     let mut buf = vec![0u8; 1024];
                     loop {
-                        let n = file.read(&mut buf).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                        if n == 0 { break; }
+                        let n = file
+                            .read(&mut buf)
+                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                        if n == 0 {
+                            break;
+                        }
                         if !try_write_response(&mut resp, &buf[..n]) {
                             return Ok(());
                         }
@@ -559,7 +559,9 @@ fn launch_http(
                 }
             }
         }
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if !try_write_response(&mut resp, b"Not found") {
             return Ok(());
         }
@@ -569,10 +571,12 @@ fn launch_http(
     let mkdir_root = sd_root.clone();
     server.fn_handler("/api/mkdir", Method::Post, move |req| {
         let uri = req.uri().to_string();
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         if let Some(ref root) = mkdir_root {
             if let Some(pos) = uri.find("path=") {
-                let p = &uri[pos+5..];
+                let p = &uri[pos + 5..];
                 let subpath = p.replace("%2F", "/").replace("%2f", "/");
                 let target = root.join(subpath.trim_start_matches('/'));
                 if target.starts_with(root) {
@@ -586,49 +590,75 @@ fn launch_http(
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
 
-    server.fn_handler("/api/reboot_factory", Method::Post, move |req| -> Result<(), Box<dyn std::error::Error>> {
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        let _ = try_write_response(&mut resp, b"Rebooting to Factory OS...");
-        chainload::reboot_to_factory()
-    })?;
-
+    server.fn_handler(
+        "/api/reboot_factory",
+        Method::Post,
+        move |req| -> Result<(), Box<dyn std::error::Error>> {
+            let mut resp = req
+                .into_ok_response()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let _ = try_write_response(&mut resp, b"Rebooting to Factory OS...");
+            chainload::reboot_to_factory()
+        },
+    )?;
 
     let upload_root = sd_root.clone();
     server.fn_handler("/upload", Method::Post, move |mut req| {
         // ... (existing upload logic, updated for path support)
         if upload_root.is_none() {
-            let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let mut resp = req
+                .into_ok_response()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             let _ = try_write_response(&mut resp, b"SD card not mounted");
             return Ok(());
         }
 
-        let filename = req.header("X-Filename").map(str::to_owned).unwrap_or_else(|| "upload.bin".to_string());
-        let path = req.header("X-Path").map(str::to_owned).unwrap_or_else(|| "/".to_string());
+        let filename = req
+            .header("X-Filename")
+            .map(str::to_owned)
+            .unwrap_or_else(|| "upload.bin".to_string());
+        let path = req
+            .header("X-Path")
+            .map(str::to_owned)
+            .unwrap_or_else(|| "/".to_string());
 
-        let target = upload_root.as_ref().unwrap()
+        let target = upload_root
+            .as_ref()
+            .unwrap()
             .join(path.trim_start_matches('/'))
             .join(&filename);
 
         if !target.starts_with(upload_root.as_ref().unwrap()) {
-             let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-             let _ = try_write_response(&mut resp, b"Invalid target");
-             return Ok(());
+            let mut resp = req
+                .into_ok_response()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let _ = try_write_response(&mut resp, b"Invalid target");
+            return Ok(());
         }
 
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         }
 
-        let mut file = File::create(&target).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut file =
+            File::create(&target).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         // Avoid blowing the httpd task stack; use a heap buffer instead.
         let mut buf = vec![0u8; 1024];
         loop {
-            let read = req.read(&mut buf).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-            if read == 0 { break; }
-            file.write_all(&buf[..read]).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let read = req
+                .read(&mut buf)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buf[..read])
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         }
 
-        let mut resp = req.into_ok_response().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let mut resp = req
+            .into_ok_response()
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         let _ = try_write_response(&mut resp, b"OK");
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
@@ -994,8 +1024,6 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
             div.className = 'file-item';
             const lowerName = file.name.toLowerCase();
             const isBin = !file.is_dir && lowerName.endsWith('.bin');
-            const isWasm = !file.is_dir && lowerName.endsWith('.wasm');
-            const isLiveApp = isWasm;
             
             const icon = file.is_dir 
                 ? '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #fbbf24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>'
@@ -1006,7 +1034,6 @@ const INDEX_HTML_PART3: &[u8] = br#"</b></span>
                 <div class="name">${file.name}</div>
                 <div class="size">${file.is_dir ? '-' : formatBytes(file.size)}</div>
                 <div class="actions">
-                    ${isLiveApp ? `<button class="btn-action" title="Run" onclick="launchApp('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path><polygon points="10 8 16 12 10 16 10 8"></polygon></svg></button>` : ''}
                     ${isBin ? `<button class="btn-action" title="Flash & Reboot" onclick="launchApp('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 12-14h-7l1-6z"></path></svg></button>` : ''}
                     ${!file.is_dir ? `<button class="btn-action" title="Download" onclick="downloadFile('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"></path></svg></button>` : ''}
                     ${file.name !== '..' ? `<button class="btn-del" title="Delete" onclick="deleteFile('${file.name}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></button>` : ''}

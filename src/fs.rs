@@ -83,8 +83,7 @@ impl SdCard {
             return Err(sys::EspError::from(ret).unwrap());
         }
 
-        let mut storage_cfg: sys::tinyusb_msc_sdmmc_config_t =
-            unsafe { std::mem::zeroed() };
+        let mut storage_cfg: sys::tinyusb_msc_sdmmc_config_t = unsafe { std::mem::zeroed() };
         storage_cfg.card = card.as_mut() as *mut sys::sdmmc_card_t as *mut c_void;
         let ret = unsafe { sys::tinyusb_msc_storage_init_sdmmc(&storage_cfg) };
         if ret != 0 {

@@ -20,7 +20,10 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new(sd_ready: bool, ota_ready: bool) -> Self {
-        Self { sd_ready, ota_ready }
+        Self {
+            sd_ready,
+            ota_ready,
+        }
     }
 
     pub fn validate_launch(&self, _launch: &AppLaunch) -> Result<(), AppValidationError> {
@@ -44,7 +47,10 @@ impl AppValidationError {
     pub fn to_lines(&self) -> Vec<String> {
         match self {
             AppValidationError::MissingSd => {
-                vec!["SD card not mounted.".to_string(), "Insert card and reboot.".to_string()]
+                vec![
+                    "SD card not mounted.".to_string(),
+                    "Insert card and reboot.".to_string(),
+                ]
             }
             AppValidationError::MissingOta => vec![
                 "No OTA partitions found.".to_string(),

@@ -9,8 +9,7 @@ pub fn init() {
     let _ = esp_idf_svc::log::EspLogger::initialize_default();
 }
 
-pub fn take_cardputer(
-) -> (
+pub fn take_cardputer() -> (
     CardputerPeripherals<impl OutputPin, impl OutputPin, impl OutputPin>,
     Modem,
 ) {

@@ -106,18 +106,13 @@ pub fn draw_selectable_list<T, F>(
     prefix_unselected: &str,
     empty_text: &str,
     to_line: F,
-)
-where
+) where
     F: Fn(&T) -> &str,
 {
     let len = items.len();
     let max_visible = max_visible.min(len.max(1));
     let half = max_visible / 2;
-    let mut start = if selected > half {
-        selected - half
-    } else {
-        0
-    };
+    let mut start = if selected > half { selected - half } else { 0 };
     if len > max_visible {
         start = start.min(len - max_visible);
     } else {
@@ -135,21 +130,26 @@ where
         for (idx, item) in items.iter().enumerate().skip(start).take(max_visible) {
             let y = top + (idx - start) as i32 * row_height;
             let is_selected = idx == selected;
-            let color = if is_selected { selected_color } else { normal_color };
+            let color = if is_selected {
+                selected_color
+            } else {
+                normal_color
+            };
             let style = MonoTextStyle::new(&FONT_6X10, color);
-            let prefix = if is_selected { prefix_selected } else { prefix_unselected };
-            Text::new(prefix, Point::new(left, y), style).draw(target).ok();
-            Text::new(
-                to_line(item),
-                Point::new(left + prefix_width, y),
-                style,
-            )
-            .draw(target)
-            .ok();
+            let prefix = if is_selected {
+                prefix_selected
+            } else {
+                prefix_unselected
+            };
+            Text::new(prefix, Point::new(left, y), style)
+                .draw(target)
+                .ok();
+            Text::new(to_line(item), Point::new(left + prefix_width, y), style)
+                .draw(target)
+                .ok();
         }
     }
 }
-
 
 pub fn render_status<T: AsRef<str>>(
     buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
@@ -221,9 +221,13 @@ pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEI
         }
 
         let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-        Text::new("Roxide", Point::new(center_x - 24, center_y + 20), title_style)
-            .draw(fbuf)
-            .ok();
+        Text::new(
+            "Roxide",
+            Point::new(center_x - 24, center_y + 20),
+            title_style,
+        )
+        .draw(fbuf)
+        .ok();
 
         let bar_width = ((SCREEN_WIDTH as f32 - 40.0) * progress) as u32;
         let bar = Rectangle::new(Point::new(20, center_y + 34), Size::new(bar_width, 3))
@@ -235,20 +239,14 @@ pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEI
     }
 }
 
-fn render_progress_bar(
-    target: &mut impl DrawTarget<Color = Rgb565>,
-    progress: FlashProgress,
-) {
+fn render_progress_bar(target: &mut impl DrawTarget<Color = Rgb565>, progress: FlashProgress) {
     let bar_width: u32 = 180;
     let bar_height: u32 = 10;
     let bar_x: i32 = 20;
     let bar_y: i32 = 90;
 
-    let outline = Rectangle::new(
-        Point::new(bar_x, bar_y),
-        Size::new(bar_width, bar_height),
-    )
-    .into_styled(PrimitiveStyle::with_stroke(Rgb565::CSS_WHITE, 1));
+    let outline = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_width, bar_height))
+        .into_styled(PrimitiveStyle::with_stroke(Rgb565::CSS_WHITE, 1));
     outline.draw(target).ok();
 
     if let Some(total) = progress.total {

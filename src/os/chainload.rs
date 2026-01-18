@@ -64,10 +64,7 @@ pub fn flash_and_reboot(
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("app.bin")],
-        Some(FlashProgress {
-            written: 0,
-            total,
-        }),
+        Some(FlashProgress { written: 0, total }),
     );
 
     let mut handle: sys::esp_ota_handle_t = 0;
@@ -115,10 +112,7 @@ pub fn flash_and_reboot(
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("app.bin")],
-                Some(FlashProgress {
-                    written,
-                    total,
-                }),
+                Some(FlashProgress { written, total }),
             );
         }
     }

@@ -1,17 +1,12 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use crate::keyboard::{CardputerKeyboard, Key, KeyEvent};
 use crate::swapchain::DoubleBuffer;
 use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-mod wasm;
-
-use wasm::WasmApp;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiveAppKind {
-    Wasm,
+    // Empty for now
 }
 
 #[derive(Debug)]
@@ -25,71 +20,29 @@ pub enum LiveAppOutcome {
     Exit,
 }
 
-pub struct LiveAppRunner {
-    app: LiveAppState,
-    last_tick: Instant,
-}
-
-enum LiveAppState {
-    Wasm(WasmApp),
-}
-
-impl LiveAppState {
-    fn teardown(self) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
-        match self {
-            LiveAppState::Wasm(app) => app.into_speaker(),
-        }
-    }
-}
+pub struct LiveAppRunner;
 
 impl LiveAppRunner {
     pub fn load(
-        kind: LiveAppKind,
-        path: PathBuf,
-        speaker: esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>,
+        _kind: LiveAppKind,
+        _path: PathBuf,
+        _speaker: esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>,
     ) -> Result<Self, LiveAppError> {
-        let app = match kind {
-            LiveAppKind::Wasm => {
-                let mut app = WasmApp::load(path)?;
-                app.attach_speaker(speaker);
-                LiveAppState::Wasm(app)
-            }
-        };
-
-        Ok(Self {
-            app,
-            last_tick: Instant::now(),
-        })
+        Err(LiveAppError::LoadFailed(
+            "No live apps supported".to_string(),
+        ))
     }
 
     pub fn tick(
         &mut self,
-        buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
-        keyboard: &mut CardputerKeyboard<'static>,
-        injected_key: Option<(KeyEvent, Key)>,
+        _buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
+        _keyboard: &mut CardputerKeyboard<'static>,
+        _injected_key: Option<(KeyEvent, Key)>,
     ) -> Result<LiveAppOutcome, LiveAppError> {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_tick);
-        self.last_tick = now;
-
-        let input = injected_key.or_else(|| keyboard.read_events());
-
-        if let Some((KeyEvent::Pressed, Key::Fn)) = input {
-            return Ok(LiveAppOutcome::Exit);
-        }
-
-        match &mut self.app {
-            LiveAppState::Wasm(app) => app.tick(buffers, input, dt),
-        }
+        Ok(LiveAppOutcome::Exit)
     }
 
-    pub fn teardown(
-        self,
-    ) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
-        self.app.teardown()
+    pub fn teardown(self) -> Option<esp_idf_hal::i2s::I2sDriver<'static, esp_idf_hal::i2s::I2sTx>> {
+        None
     }
-}
-
-pub(super) fn tick_interval(dt: Duration) -> u32 {
-    dt.as_millis().min(u128::from(u32::MAX)) as u32
 }

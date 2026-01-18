@@ -111,7 +111,8 @@ impl<const W: usize, const H: usize> DoubleBuffer<W, H> {
             &mut self.fbuf1
         };
 
-        self.pending.store(fbuf.framebuffer as usize, Ordering::Release);
+        self.pending
+            .store(fbuf.framebuffer as usize, Ordering::Release);
     }
 }
 

@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 
 use crate::keyboard::{CardputerKeyboard, Key, KeyEvent};
 
-use super::live_apps::LiveAppKind;
-
 #[derive(Clone, Debug)]
 pub enum MenuItem {
     Back,
@@ -12,7 +10,6 @@ pub enum MenuItem {
     UsbMsc,
     Dir(PathBuf),
     App(PathBuf),
-    LiveApp(LiveAppKind, PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -163,8 +160,6 @@ fn read_menu_items(root: &Path, current: &Path) -> std::io::Result<Vec<MenuEntry
 
         if path.is_dir() {
             items.push(build_entry(MenuItem::Dir(path)));
-        } else if let Some(kind) = live_app_kind_for_path(&path) {
-            items.push(build_entry(MenuItem::LiveApp(kind, path)));
         } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             if ext.eq_ignore_ascii_case("bin") {
                 items.push(build_entry(MenuItem::App(path)));
@@ -191,7 +186,6 @@ fn build_entry(item: MenuItem) -> MenuEntry {
         MenuItem::MountSD => ("Mount SD Card".to_string(), String::new(), 0),
         MenuItem::UsbMsc => ("Expose via USB".to_string(), String::new(), 0),
         MenuItem::Dir(path) => (format!("[{}]", path_name(path)), path_sort_key(path), 1),
-        MenuItem::LiveApp(_, path) => (path_name(path), path_sort_key(path), 2),
         MenuItem::App(path) => (path_name(path), path_sort_key(path), 3),
     };
 
@@ -210,14 +204,6 @@ fn path_name(path: &Path) -> String {
 
 fn path_sort_key(path: &Path) -> String {
     path_name(path).to_lowercase()
-}
-
-fn live_app_kind_for_path(path: &Path) -> Option<LiveAppKind> {
-    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    match ext.as_str() {
-        "wasm" => Some(LiveAppKind::Wasm),
-        _ => None,
-    }
 }
 
 pub fn menu_path_display(menu: &MenuState) -> &str {

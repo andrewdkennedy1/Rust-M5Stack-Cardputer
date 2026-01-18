@@ -58,7 +58,7 @@ embuild = "0.33"
 [package.metadata.esp-idf-sys]
 
 [[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/usb_shim", "components/wasm3"]
+component_dirs = ["components/usb_shim"]
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_tinyusb", version = "1.2" }

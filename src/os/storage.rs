@@ -14,15 +14,7 @@ pub struct SdFileEntry {
 }
 
 pub fn mount_sd_card() -> Option<SdCard> {
-    SdCard::new(
-        SD_ROOT,
-        sys::spi_host_device_t_SPI3_HOST,
-        39,
-        14,
-        40,
-        12,
-    )
-    .ok()
+    SdCard::new(SD_ROOT, sys::spi_host_device_t_SPI3_HOST, 39, 14, 40, 12).ok()
 }
 
 pub fn list_files_with_extension(dir: &str, extension: &str) -> Vec<SdFileEntry> {
@@ -34,9 +26,11 @@ pub fn list_files_with_extension(dir: &str, extension: &str) -> Vec<SdFileEntry>
     let ext_str = extension.trim_start_matches('.');
     for entry in dir_iter.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()).map_or(false, |ext| {
-            ext.eq_ignore_ascii_case(ext_str)
-        }) {
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map_or(false, |ext| ext.eq_ignore_ascii_case(ext_str))
+        {
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
