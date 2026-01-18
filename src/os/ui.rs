@@ -100,7 +100,7 @@ fn draw_status_bar(target: &mut impl DrawTarget<Color = Rgb565>, status: &Status
     // Shorten WiFi text (e.g. just icon/status) if needed, currently using full text
     // We'll concatenate specific info
     let right_text = format!("{}  {}", status.wifi_text, status.battery_text);
-    let width = (right_text.len() as i32 * 6);
+    let width = right_text.len() as i32 * 6;
     let x = (SCREEN_WIDTH as i32 - width - 2).max(0);
     Text::new(&right_text, Point::new(x, 9), style).draw(target).ok();
 }
@@ -227,7 +227,7 @@ pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEI
     let start = Instant::now();
     let duration = Duration::from_millis(900);
     // Precomputed ring offsets to avoid trig on boot.
-    let ring: [(i32, i32); 8] = [
+    let ring: [(i32, i32); 9] = [
         (0, -18),
         (12, -12),
         (18, 0),
@@ -245,4 +245,100 @@ pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEI
 
     while start.elapsed() < duration {
         let elapsed = start.elapsed();
-        let phase = ((el
+        let phase = ((elapsed.as_millis() / 90) % ring.len() as u128) as usize;
+        let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).min(1.0);
+
+        let fbuf = buffers.swap_framebuffer();
+        let _ = fbuf.clear(Rgb565::BLACK);
+
+        for (idx, (dx, dy)) in ring.iter().enumerate() {
+            let color = if idx == phase {
+                Rgb565::CSS_CYAN
+            } else {
+                Rgb565::new(2, 10, 10)
+            };
+            let size = if idx == phase { 6 } else { 4 };
+            let rect = Rectangle::new(
+                Point::new(center_x + dx - size / 2, center_y + dy - size / 2),
+                Size::new(size as u32, size as u32),
+            )
+            .into_styled(PrimitiveStyle::with_fill(color));
+            rect.draw(fbuf).ok();
+        }
+
+        let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+        Text::new(
+            "Roxide",
+            Point::new(center_x - 24, center_y + 20),
+            title_style,
+        )
+        .draw(fbuf)
+        .ok();
+
+        let bar_width = ((SCREEN_WIDTH as f32 - 40.0) * progress) as u32;
+        let bar = Rectangle::new(Point::new(20, center_y + 34), Size::new(bar_width, 3))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_CYAN));
+        bar.draw(fbuf).ok();
+
+        buffers.send_framebuffer();
+        std::thread::sleep(Duration::from_millis(16));
+    }
+}
+
+fn render_progress_bar(target: &mut impl DrawTarget<Color = Rgb565>, progress: FlashProgress) {
+    let bar_width: u32 = 180;
+    let bar_height: u32 = 10;
+    let bar_x: i32 = 20;
+    let bar_y: i32 = 90;
+
+    let outline = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_width, bar_height))
+        .into_styled(PrimitiveStyle::with_stroke(Rgb565::CSS_WHITE, 1));
+    outline.draw(target).ok();
+
+    if let Some(total) = progress.total {
+        if total > 0 {
+            let pct = (progress.written.saturating_mul(100) / total).min(100);
+            let filled = (bar_width.saturating_sub(2) as usize * pct / 100) as u32;
+            if filled > 0 {
+                let fill_rect = Rectangle::new(
+                    Point::new(bar_x + 1, bar_y + 1),
+                    Size::new(filled, bar_height - 2),
+                )
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_YELLOW));
+                fill_rect.draw(target).ok();
+            }
+
+            let text = format!("{}%", pct);
+            let style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+            Text::new(
+                &text,
+                Point::new(bar_x + bar_width as i32 + 6, bar_y + 8),
+                style,
+            )
+            .draw(target)
+            .ok();
+        }
+    }
+}
+
+pub fn show_message_and_wait<T: AsRef<str>>(
+    buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
+    keyboard: &mut CardputerKeyboard<'static>,
+    title: &str,
+    lines: &[T],
+) {
+    let text: Vec<&str> = lines.iter().map(|line| line.as_ref()).collect();
+    render_status(buffers, title, &text, None);
+    wait_for_keypress(keyboard);
+}
+
+fn wait_for_keypress(keyboard: &mut CardputerKeyboard<'static>) {
+    loop {
+        if let Some((event, _)) = keyboard.read_events() {
+            if matches!(event, KeyEvent::Pressed) {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}

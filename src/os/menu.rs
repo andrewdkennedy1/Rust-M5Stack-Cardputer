@@ -276,8 +276,7 @@ fn build_entry(item: MenuItem) -> MenuEntry {
         MenuItem::WifiScan => ("WiFi Scanner".to_string(), "wifi".to_string(), 5),
         MenuItem::BatteryCheck => ("Battery Check".to_string(), "batt".to_string(), 5),
         MenuItem::StorageInfo => ("Storage Info".to_string(), "store".to_string(), 5),
-        MenuItem::SystemInfo => ("System Info".to_str
-ing(), "sys".to_string(), 5),
+        MenuItem::SystemInfo => ("System Info".to_string(), "sys".to_string(), 5),
 
         // Settings
         MenuItem::DisplayBrightness => ("Display Brightness".to_string(), "disp".to_string(), 5),

@@ -252,4 +252,198 @@ pub fn boot() -> ! {
                         }
                         menu_needs_refresh = true;
                     }
-                    Err(err) =
+                    Err(err) => {
+                        show_message_and_wait(
+                            &mut buffers,
+                            &mut keyboard,
+                            "App Error",
+                            &[format!("{:?}", err)],
+                        );
+                        if let Some(app) = live_app.take() {
+                            speaker = app.teardown();
+                        }
+                        menu_needs_refresh = true;
+                    }
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(UI_TICK_MS));
+            continue;
+        }
+
+        if menu_needs_refresh {
+            refresh_menu_or_warn(
+                &mut menu,
+                sd_ready,
+                usb_active,
+                false,
+                &mut buffers,
+                &mut keyboard,
+            );
+            menu_needs_refresh = false;
+        }
+        let status = status_provider.snapshot();
+        render_menu(&mut buffers, &menu, &context, status);
+
+        let command = control_rx
+            .try_recv()
+            .ok()
+            .or_else(|| menu::read_menu_action(&mut keyboard).map(RemoteCommand::Menu));
+        if let Some(command) = command {
+            match command {
+                RemoteCommand::Menu(action) => match action {
+                    MenuAction::Up => menu.move_up(),
+                    MenuAction::Down => menu.move_down(),
+                    MenuAction::Refresh => {
+                        refresh_menu_or_warn(
+                            &mut menu,
+                            sd_ready,
+                            usb_active,
+                            true,
+                            &mut buffers,
+                            &mut keyboard,
+                        );
+                    }
+                    MenuAction::TabNext => {
+                        menu.switch_tab();
+                        refresh_menu_or_warn(
+                            &mut menu,
+                            sd_ready,
+                            usb_active,
+                            true,
+                            &mut buffers,
+                            &mut keyboard,
+                        );
+                    }
+                    MenuAction::Back => {
+                        if usb_active {
+                            warn_usb_storage_active(&mut buffers, &mut keyboard);
+                        } else if menu.go_back() {
+                            refresh_menu_or_warn(
+                                &mut menu,
+                                sd_ready,
+                                usb_active,
+                                true,
+                                &mut buffers,
+                                &mut keyboard,
+                            );
+                        }
+                    }
+                    MenuAction::Select => {
+                        if let Some(item) = menu.selected_item().cloned() {
+                            match item {
+                                MenuItem::Back => {
+                                    if usb_active {
+                                        warn_usb_storage_active(&mut buffers, &mut keyboard);
+                                    } else if menu.go_back() {
+                                        refresh_menu_or_warn(
+                                            &mut menu,
+                                            sd_ready,
+                                            usb_active,
+                                            true,
+                                            &mut buffers,
+                                            &mut keyboard,
+                                        );
+                                    }
+                                }
+                                MenuItem::MountSD => {
+                                    render_status(
+                                        &mut buffers,
+                                        "Mounting",
+                                        &["Mounting SD card..."],
+                                        None,
+                                    );
+                                    if let Some(card) = mount_sd_card() {
+                                        sd = Some(card);
+                                        sd_ready = true;
+                                        context.sd_ready = true;
+                                        web_handle.set_sd_root(PathBuf::from(SD_ROOT));
+                                        if std::path::Path::new(SD_APPS_PATH).is_dir() {
+                                            menu.enter_dir(PathBuf::from(SD_APPS_PATH));
+                                        }
+                                        menu_needs_refresh = true;
+                                    } else {
+                                        show_message_and_wait(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            "Mount Failed",
+                                            &["Check SD card", "and try again."],
+                                        );
+                                    }
+                                }
+                                MenuItem::UsbMsc => {
+                                    if let Some(ref card) = sd {
+                                        show_message_and_wait(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            "USB Storage",
+                                            &[
+                                                "USB driver will block",
+                                                "the serial port!",
+                                                "Press any key to",
+                                                "start exposing SD...",
+                                            ],
+                                        );
+                                        usb_msc = usb_msc::UsbMsc::init(card).ok();
+                                        web_pause.sync(&web_handle);
+                                        menu_needs_refresh = true;
+                                    }
+                                }
+                                MenuItem::Dir(path) => {
+                                    if usb_active {
+                                        warn_usb_storage_active(&mut buffers, &mut keyboard);
+                                    } else {
+                                        menu.enter_dir(path);
+                                        refresh_menu_or_warn(
+                                            &mut menu,
+                                            sd_ready,
+                                            usb_active,
+                                            true,
+                                            &mut buffers,
+                                            &mut keyboard,
+                                        );
+                                    }
+                                }
+                                MenuItem::App(path) => {
+                                    if usb_active {
+                                        warn_usb_storage_active(&mut buffers, &mut keyboard);
+                                    } else {
+                                        launch_or_report(
+                                            &mut buffers,
+                                            &mut keyboard,
+                                            &context,
+                                            path,
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    show_message_and_wait(
+                                        &mut buffers,
+                                        &mut keyboard,
+                                        "Not Implemented",
+                                        &["This feature is", "coming soon!"],
+                                    );
+                                }
+                            }
+                        }
+                    }
+                },
+                RemoteCommand::FlashBin(path) => {
+                    if path.to_str() == Some("__FACTORY__") {
+                        chainload::reboot_to_factory();
+                    } else if path.to_str() == Some("__REBOOT__") {
+                        unsafe {
+                            sys::esp_restart();
+                        }
+                    } else if usb_active {
+                        warn_usb_storage_active(&mut buffers, &mut keyboard);
+                    } else {
+                        launch_or_report(&mut buffers, &mut keyboard, &context, path);
+                    }
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(UI_TICK_MS));
+    }
+}
