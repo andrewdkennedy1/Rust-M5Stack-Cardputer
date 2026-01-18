@@ -11,12 +11,14 @@ use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use std::time::{Duration, Instant};
 
 use super::app::AppContext;
-use super::menu::{menu_path_display, MenuState};
+use super::menu::{menu_path_display, MainTab, MenuState};
 use super::status::StatusSnapshot;
 
-const LIST_TOP: i32 = 48;
+const STATUS_BAR_HEIGHT: i32 = 12;
+const TAB_BAR_HEIGHT: i32 = 14;
+const LIST_TOP: i32 = STATUS_BAR_HEIGHT + TAB_BAR_HEIGHT + 2;
 const ROW_HEIGHT: i32 = 12;
-const MAX_VISIBLE_ROWS: usize = 8;
+const MAX_VISIBLE_ROWS: usize = 7;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FlashProgress {
@@ -33,20 +35,23 @@ pub fn render_menu(
     let fbuf = buffers.swap_framebuffer();
     let _ = fbuf.clear(Rgb565::BLACK);
 
-    let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-    Text::new("Roxide", Point::new(2, 10), title_style)
-        .draw(fbuf)
-        .ok();
+    // Draw Status Bar (Condensed)
+    draw_status_bar(fbuf, status);
 
-    draw_right_aligned(fbuf, &status.clock_text, 10, Rgb565::CSS_CYAN);
-    draw_right_aligned(fbuf, &status.wifi_text, 22, Rgb565::CSS_GREEN);
-    draw_right_aligned(fbuf, &status.battery_text, 34, Rgb565::CSS_YELLOW);
+    // Draw Tab Bar
+    draw_tabs(fbuf, menu.active_tab);
 
-    let path_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-    let path_text = menu_path_display(menu);
-    Text::new(path_text, Point::new(2, 22), path_style)
-        .draw(fbuf)
-        .ok();
+    // Draw Path if in Apps tab and not at root
+    if menu.active_tab == MainTab::Apps {
+        let path_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+        let path_text = menu_path_display(menu);
+        // Only draw path if it's not root "/" (cleaner look)
+        if path_text != "/" {
+             Text::new(path_text, Point::new(2, LIST_TOP - 2), path_style)
+                .draw(fbuf)
+                .ok();
+        }
+    }
 
     draw_selectable_list(
         fbuf,
@@ -70,7 +75,7 @@ pub fn render_menu(
     } else if !context.ota_ready {
         "OTA partitions missing"
     } else {
-        "Up/Down: ;/.  Enter: load  Back: Backspace"
+        "Select: Enter  Tab: Switch"
     };
     let footer_y = SCREEN_HEIGHT as i32 - 4;
     Text::new(footer, Point::new(2, footer_y), footer_style)
@@ -80,16 +85,54 @@ pub fn render_menu(
     buffers.send_framebuffer();
 }
 
-fn draw_right_aligned(
-    target: &mut impl DrawTarget<Color = Rgb565>,
-    text: &str,
-    y: i32,
-    color: Rgb565,
-) {
-    let style = MonoTextStyle::new(&FONT_6X10, color);
-    let width = (text.len() as i32 * 6) + 2;
-    let x = (SCREEN_WIDTH as i32 - width).max(0);
-    Text::new(text, Point::new(x, y), style).draw(target).ok();
+fn draw_status_bar(target: &mut impl DrawTarget<Color = Rgb565>, status: &StatusSnapshot) {
+    // Background bar
+    let rect = Rectangle::new(Point::new(0, 0), Size::new(SCREEN_WIDTH as u32, STATUS_BAR_HEIGHT as u32))
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::new(4, 8, 4))); // Dark gray-green
+    rect.draw(target).ok();
+
+    let style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
+    
+    // Time (Left)
+    Text::new(&status.clock_text, Point::new(2, 9), style).draw(target).ok();
+    
+    // WiFi / Batt (Right)
+    // Shorten WiFi text (e.g. just icon/status) if needed, currently using full text
+    // We'll concatenate specific info
+    let right_text = format!("{}  {}", status.wifi_text, status.battery_text);
+    let width = (right_text.len() as i32 * 6);
+    let x = (SCREEN_WIDTH as i32 - width - 2).max(0);
+    Text::new(&right_text, Point::new(x, 9), style).draw(target).ok();
+}
+
+fn draw_tabs(target: &mut impl DrawTarget<Color = Rgb565>, active: MainTab) {
+    let tabs = [MainTab::Apps, MainTab::Tools, MainTab::Settings];
+    let tab_width = SCREEN_WIDTH as i32 / 3;
+    
+    for (i, tab) in tabs.iter().enumerate() {
+        let x = i as i32 * tab_width;
+        let label = match tab {
+            MainTab::Apps => "Apps",
+            MainTab::Tools => "Tools",
+            MainTab::Settings => "Settings",
+        };
+        
+        let is_active = *tab == active;
+        let color = if is_active { Rgb565::CSS_CYAN } else { Rgb565::new(10, 20, 10) };
+        let text_color = if is_active { Rgb565::BLACK } else { Rgb565::CSS_WHITE };
+
+        // Tab background
+        Rectangle::new(Point::new(x, STATUS_BAR_HEIGHT), Size::new(tab_width as u32, TAB_BAR_HEIGHT as u32))
+             .into_styled(PrimitiveStyle::with_fill(color))
+             .draw(target)
+             .ok();
+        
+        // Tab label
+        let text_len = label.len() as i32 * 6;
+        let text_x = x + (tab_width - text_len) / 2;
+        let style = MonoTextStyle::new(&FONT_6X10, text_color);
+        Text::new(label, Point::new(text_x, STATUS_BAR_HEIGHT + 10), style).draw(target).ok();
+    }
 }
 
 pub fn draw_selectable_list<T, F>(
@@ -123,12 +166,12 @@ pub fn draw_selectable_list<T, F>(
 
     if len == 0 {
         let empty_style = MonoTextStyle::new(&FONT_6X10, normal_color);
-        Text::new(empty_text, Point::new(left, top), empty_style)
+        Text::new(empty_text, Point::new(left, top + row_height), empty_style)
             .draw(target)
             .ok();
     } else {
         for (idx, item) in items.iter().enumerate().skip(start).take(max_visible) {
-            let y = top + (idx - start) as i32 * row_height;
+            let y = top + (idx - start) as i32 * row_height + 8; // Offset for text baseline
             let is_selected = idx == selected;
             let color = if is_selected {
                 selected_color
@@ -193,106 +236,13 @@ pub fn render_boot_animation(buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEI
         (-12, 12),
         (-18, 0),
         (-12, -12),
+        (0, -18), // Wrap around for safety
     ];
+    let ring = &ring[0..8];
+    
     let center_x = (SCREEN_WIDTH as i32) / 2;
     let center_y = (SCREEN_HEIGHT as i32) / 2 - 6;
 
     while start.elapsed() < duration {
         let elapsed = start.elapsed();
-        let phase = ((elapsed.as_millis() / 90) % ring.len() as u128) as usize;
-        let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).min(1.0);
-
-        let fbuf = buffers.swap_framebuffer();
-        let _ = fbuf.clear(Rgb565::BLACK);
-
-        for (idx, (dx, dy)) in ring.iter().enumerate() {
-            let color = if idx == phase {
-                Rgb565::CSS_CYAN
-            } else {
-                Rgb565::new(2, 10, 10)
-            };
-            let size = if idx == phase { 6 } else { 4 };
-            let rect = Rectangle::new(
-                Point::new(center_x + dx - size / 2, center_y + dy - size / 2),
-                Size::new(size as u32, size as u32),
-            )
-            .into_styled(PrimitiveStyle::with_fill(color));
-            rect.draw(fbuf).ok();
-        }
-
-        let title_style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-        Text::new(
-            "Roxide",
-            Point::new(center_x - 24, center_y + 20),
-            title_style,
-        )
-        .draw(fbuf)
-        .ok();
-
-        let bar_width = ((SCREEN_WIDTH as f32 - 40.0) * progress) as u32;
-        let bar = Rectangle::new(Point::new(20, center_y + 34), Size::new(bar_width, 3))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_CYAN));
-        bar.draw(fbuf).ok();
-
-        buffers.send_framebuffer();
-        std::thread::sleep(Duration::from_millis(16));
-    }
-}
-
-fn render_progress_bar(target: &mut impl DrawTarget<Color = Rgb565>, progress: FlashProgress) {
-    let bar_width: u32 = 180;
-    let bar_height: u32 = 10;
-    let bar_x: i32 = 20;
-    let bar_y: i32 = 90;
-
-    let outline = Rectangle::new(Point::new(bar_x, bar_y), Size::new(bar_width, bar_height))
-        .into_styled(PrimitiveStyle::with_stroke(Rgb565::CSS_WHITE, 1));
-    outline.draw(target).ok();
-
-    if let Some(total) = progress.total {
-        if total > 0 {
-            let pct = (progress.written.saturating_mul(100) / total).min(100);
-            let filled = (bar_width.saturating_sub(2) as usize * pct / 100) as u32;
-            if filled > 0 {
-                let fill_rect = Rectangle::new(
-                    Point::new(bar_x + 1, bar_y + 1),
-                    Size::new(filled, bar_height - 2),
-                )
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_YELLOW));
-                fill_rect.draw(target).ok();
-            }
-
-            let text = format!("{}%", pct);
-            let style = MonoTextStyle::new(&FONT_6X10, Rgb565::CSS_WHITE);
-            Text::new(
-                &text,
-                Point::new(bar_x + bar_width as i32 + 6, bar_y + 8),
-                style,
-            )
-            .draw(target)
-            .ok();
-        }
-    }
-}
-
-pub fn show_message_and_wait<T: AsRef<str>>(
-    buffers: &mut DoubleBuffer<SCREEN_WIDTH, SCREEN_HEIGHT>,
-    keyboard: &mut CardputerKeyboard<'static>,
-    title: &str,
-    lines: &[T],
-) {
-    let text: Vec<&str> = lines.iter().map(|line| line.as_ref()).collect();
-    render_status(buffers, title, &text, None);
-    wait_for_keypress(keyboard);
-}
-
-fn wait_for_keypress(keyboard: &mut CardputerKeyboard<'static>) {
-    loop {
-        if let Some((event, _)) = keyboard.read_events() {
-            if matches!(event, KeyEvent::Pressed) {
-                return;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
+        let phase = ((el
