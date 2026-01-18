@@ -1,9 +1,0 @@
-[workspace]
-members = [
-    "roxide_wasm",
-    "demo_3d",
-    "demo_rink",
-    "demo_sound",
-    "demo_espnow_remote",
-]
-resolver = "2"
